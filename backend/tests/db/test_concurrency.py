@@ -2,6 +2,12 @@
 
 Uses real, separately committed transactions on two connections (not the rollback-only
 db_session fixture), then cleans up the rows it created.
+
+These are raw inserts with no row lock, so PostgreSQL may reject the loser in one of two
+ways: an exclusion violation, or (when both inserts check each other's uncommitted rows
+at the same instant) a deadlock abort. Either way exactly one booking is stored. The real
+booking service locks the vehicle row first, so it serialises instead of deadlocking
+(see tests/bookings/test_booking_concurrency.py).
 """
 
 import threading
@@ -9,7 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import Booking
@@ -53,6 +59,9 @@ def test_concurrent_overlapping_bookings_only_one_succeeds(
             except IntegrityError as exc:
                 session.rollback()
                 result = f"rejected:{exc.orig.diag.constraint_name}"
+            except OperationalError as exc:  # deadlock detected while checking the constraint
+                session.rollback()
+                result = f"rejected:{type(exc.orig).__name__}"
         with lock:
             outcomes.append(result)
 
@@ -62,7 +71,11 @@ def test_concurrent_overlapping_bookings_only_one_succeeds(
     for thread in threads:
         thread.join(timeout=30)
 
-    assert sorted(outcomes) == ["committed", "rejected:ex_bookings_vehicle_period_overlap"]
+    assert sorted(outcomes)[0] == "committed"
+    assert sorted(outcomes)[1] in (
+        "rejected:ex_bookings_vehicle_period_overlap",
+        "rejected:DeadlockDetected",
+    )
     with migrated_engine.connect() as connection:
         stored = connection.scalar(
             text("SELECT count(*) FROM bookings WHERE vehicle_id = :id"), {"id": price.vehicle_id}

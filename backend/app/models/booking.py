@@ -58,6 +58,9 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_bookings_vehicle_start", "vehicle_id", "start_at"),
         Index("ix_bookings_renter_created", "renter_id", "created_at"),
         Index("ix_bookings_status_hold", "status", "hold_expires_at"),
+        CheckConstraint(
+            "(status = 'CANCELLED') = (cancelled_at IS NOT NULL)", name="cancellation_consistent"
+        ),
     )
 
     reference: Mapped[str] = mapped_column(String(20), unique=True)
@@ -87,9 +90,13 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     delivery_address: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None]
     cancelled_at: Mapped[datetime | None]
+    cancelled_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     cancellation_reason: Mapped[str | None] = mapped_column(String(500))
 
-    renter: Mapped[User] = relationship()
+    renter: Mapped[User] = relationship(foreign_keys=[renter_id])
     vehicle: Mapped[Vehicle] = relationship()
     price: Mapped[VehiclePrice] = relationship()

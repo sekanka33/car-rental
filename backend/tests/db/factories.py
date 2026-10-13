@@ -97,9 +97,10 @@ def booking_values(
         "start_at": start,
         "end_at": start + timedelta(days=days),
         "status": status,
-        "hold_expires_at": start - timedelta(days=30)
+        "hold_expires_at": datetime.now(UTC) + timedelta(minutes=15)
         if status == BookingStatus.PENDING_PAYMENT
         else None,
+        "cancelled_at": start - timedelta(days=1) if status == BookingStatus.CANCELLED else None,
         "daily_rate": price.daily_rate,
         "rental_days": days,
         "rental_amount": rental_amount,

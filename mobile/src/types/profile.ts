@@ -5,10 +5,11 @@ export type VerificationStatus =
   | 'REJECTED'
   | 'REQUIRES_MORE_INFORMATION';
 
+/** GET /api/v1/customers/me/profile */
 export interface CustomerProfile {
-  fullName: string;
-  email: string;
-  phone: string;
-  idDocumentStatus: VerificationStatus;
-  drivingLicenceStatus: VerificationStatus;
+  date_of_birth: string | null;
+  id_verification_status: VerificationStatus;
+  licence_verification_status: VerificationStatus;
+  licence_expiry_date: string | null;
+  minimum_age: number;
 }

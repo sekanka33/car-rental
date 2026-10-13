@@ -209,6 +209,27 @@ priced and owned by an active account returns 404, photos included. Responses ne
 the VIN, registration number, owner surname, contact details or documents. Owners appear as
 first name plus the vehicle's area. Availability never reveals reasons or renters.
 
+### Bookings
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `POST /api/v1/bookings` | `RENTER` | Reserve: `vehicle_id`, `start_at`, `end_at` (with timezone), `delivery_address`. The backend checks eligibility (403 `renter_not_eligible` with `details[].reason`), the listing (404), availability (409 `vehicle_unavailable`) and limits, then stores the official price breakdown. The new booking is `PENDING_PAYMENT` with `hold_expires_at` |
+| `GET /api/v1/bookings[?status=]` | `RENTER` | Own booking history, newest first |
+| `GET /api/v1/bookings/{id}` | `RENTER` (own only, else 404) | Booking with its agreed price |
+| `POST /api/v1/bookings/{id}/cancel` | `RENTER` | Cancel an unpaid hold, or a confirmed booking before it starts |
+| `GET /api/v1/admin/bookings[?status=&vehicle_id=]` | `ADMIN` | All bookings with renter and owner |
+| `GET /api/v1/admin/bookings/{id}` | `ADMIN` | Detail |
+| `POST /api/v1/admin/bookings/{id}/cancel` | `ADMIN` | Cancel with a required reason (audited) |
+
+Status transitions are enforced in one place (`ALLOWED_TRANSITIONS` in
+`app/services/bookings.py`; see BR-5.5). Overlaps are rejected by the database exclusion
+constraint. Booking creation also locks the vehicle row, so two simultaneous requests
+serialise cleanly instead of deadlocking.
+
+Run `python -m app.cli expire-holds` from cron (e.g. every minute) to mark unpaid holds
+past their deadline `EXPIRED`. They are also expired lazily on reads and before
+availability checks.
+
 ### Development demo data
 
 ```bash
@@ -278,6 +299,10 @@ See [.env.example](.env.example).
 | `DOCUMENT_HASH_KEY` | **required** | At least 32 characters; keys the HMAC of ID/licence numbers. Do not rotate casually |
 | `DOCUMENT_STORAGE_DIR` | `storage/private` | Private directory for uploaded documents (relative to `backend/`) |
 | `MAX_DOCUMENT_BYTES` | `10485760` | Maximum size per uploaded file (100 KB–25 MB) |
+| `BOOKING_HOLD_MINUTES` | `15` | How long an unpaid booking holds the dates (5–60) |
+| `BOOKING_MIN_LEAD_MINUTES` | `120` | Earliest start, relative to now |
+| `BOOKING_MAX_DAYS` | `30` | Longest rental (1–90) |
+| `MAX_PENDING_BOOKINGS_PER_RENTER` | `2` | Unpaid holds a renter may have at once |
 
 ## Structure
 
@@ -290,19 +315,19 @@ app/
 │   ├── security.py    # Argon2id hashing, JWT access tokens, random token helpers
 │   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
 │   └── logging.py
-├── cli.py             # Operator commands (create-admin, seed-demo-data)
+├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds)
 ├── demo_data.py       # DEVELOPMENT-ONLY demo marketplace data
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, bookings, admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

@@ -17,7 +17,13 @@ from sqlalchemy.orm import Session, aliased, selectinload
 from app.core.errors import AppError, NotFoundError
 from app.integrations.storage import DocumentStorage
 from app.models import Booking, OwnerProfile, Vehicle, VehicleAvailabilityBlock, VehiclePrice
-from app.models.enums import BLOCKING_BOOKING_STATUSES, FuelType, Province, Transmission
+from app.models.enums import (
+    BLOCKING_BOOKING_STATUSES,
+    BookingStatus,
+    FuelType,
+    Province,
+    Transmission,
+)
 from app.services.pricing import PriceQuote, calculate_quote
 from app.services.vehicles import publicly_listed_vehicles
 
@@ -83,11 +89,23 @@ def _listed_with_price(now: datetime) -> tuple[Select, type[VehiclePrice]]:
     return query, price
 
 
+def reserving(now: datetime):
+    """A booking that currently holds its dates: a blocking status, excluding unpaid holds
+    whose deadline has passed (they are marked EXPIRED lazily)."""
+    return and_(
+        Booking.status.in_(BLOCKING_BOOKING_STATUSES),
+        or_(
+            Booking.status != BookingStatus.PENDING_PAYMENT,
+            Booking.hold_expires_at > now,
+        ),
+    )
+
+
 def _overlaps(start: datetime, end: datetime):
     """Conditions: a reserving booking or an owner block overlaps [start, end)."""
     booked = exists().where(
         Booking.vehicle_id == Vehicle.id,
-        Booking.status.in_(BLOCKING_BOOKING_STATUSES),
+        reserving(_now()),
         Booking.start_at < end,
         Booking.end_at > start,
     )
@@ -193,7 +211,7 @@ def unavailable_periods(
     bookings = session.execute(
         select(Booking.start_at, Booking.end_at).where(
             Booking.vehicle_id == vehicle_id,
-            Booking.status.in_(BLOCKING_BOOKING_STATUSES),
+            reserving(_now()),
             Booking.start_at < end,
             Booking.end_at > start,
         )

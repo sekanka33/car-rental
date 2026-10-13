@@ -162,8 +162,11 @@ export default function VehicleDetailsScreen() {
         </View>
       </View>
 
-      <Button label="Book this car" disabled className="mt-8" />
-      <Text className="mt-2 text-center text-sm text-ink-muted">Booking opens in a later release.</Text>
+      <Button
+        label="Book this car"
+        className="mt-8"
+        onPress={() => router.push({ pathname: '/vehicles/[id]/book', params: { id: vehicle.id } })}
+      />
     </Screen>
   );
 }

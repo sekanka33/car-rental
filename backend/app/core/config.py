@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     document_storage_dir: Path = Path("storage/private")
     max_document_bytes: int = Field(default=10 * 1024 * 1024, ge=100 * 1024, le=25 * 1024 * 1024)
 
+    # Bookings.
+    booking_hold_minutes: int = Field(default=15, ge=5, le=60)
+    booking_min_lead_minutes: int = Field(default=120, ge=0, le=7 * 24 * 60)
+    booking_max_days: int = Field(default=30, ge=1, le=90)
+    max_pending_bookings_per_renter: int = Field(default=2, ge=1, le=10)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_cors_origins(cls, value: object) -> object:

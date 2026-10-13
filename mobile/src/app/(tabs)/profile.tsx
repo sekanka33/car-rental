@@ -1,11 +1,15 @@
 import { router } from 'expo-router';
+import { useCallback } from 'react';
 import { Text, View } from 'react-native';
 
+import { SignInPrompt } from '@/components/sign-in-prompt';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Notice } from '@/components/ui/notice';
 import { Screen } from '@/components/ui/screen';
-import { SAMPLE_CUSTOMER_PROFILE } from '@/data/sample-profile';
+import { LoadingState } from '@/components/ui/state-views';
+import { useAuth } from '@/context/auth';
+import { useAsync } from '@/hooks/use-async';
+import { getCustomerProfile } from '@/services/customers';
 import type { VerificationStatus } from '@/types/profile';
 
 const STATUS_DISPLAY: Record<VerificationStatus, { label: string; tone: BadgeTone }> = {
@@ -25,12 +29,36 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
+function RenterVerification() {
+  const load = useCallback(() => getCustomerProfile(), []);
+  const profile = useAsync(load);
+  if (profile.status === 'loading') return <Text className="text-base text-ink-muted">Loading…</Text>;
+  if (profile.status === 'error') return <Text className="text-base text-ink-muted">Could not load verification.</Text>;
+  const id = STATUS_DISPLAY[profile.data.id_verification_status];
+  const licence = STATUS_DISPLAY[profile.data.licence_verification_status];
+  return (
+    <>
+      <Row label="South African ID">
+        <Badge label={id.label} tone={id.tone} />
+      </Row>
+      <Row label="Driving licence">
+        <Badge label={licence.label} tone={licence.tone} />
+      </Row>
+      <Text className="mt-3 text-sm text-ink-muted">
+        You need an approved ID and driving licence before you can book. Uploading documents in
+        the app arrives in a later release.
+      </Text>
+    </>
+  );
+}
+
 export default function ProfileScreen() {
-  // Stage 02 preview: replaced by the authenticated user's profile from the backend.
-  const profile = SAMPLE_CUSTOMER_PROFILE;
-  const idStatus = STATUS_DISPLAY[profile.idDocumentStatus];
-  const licenceStatus = STATUS_DISPLAY[profile.drivingLicenceStatus];
-  const initials = profile.fullName
+  const { state, logout } = useAuth();
+  if (state.status === 'loading') return <LoadingState />;
+  if (state.status === 'signedOut') return <SignInPrompt message="Log in to see your profile." />;
+
+  const { user } = state;
+  const initials = user.full_name
     .split(' ')
     .map((part) => part[0])
     .join('')
@@ -39,39 +67,45 @@ export default function ProfileScreen() {
 
   return (
     <Screen scroll>
-      <Notice message="Preview profile: sample data, not your account." />
       <View className="items-center">
         <View className="h-20 w-20 items-center justify-center rounded-full bg-brand-100">
           <Text className="text-2xl font-bold text-brand-700">{initials}</Text>
         </View>
-        <Text className="mt-3 text-xl font-semibold text-ink">{profile.fullName}</Text>
-        <Text className="text-base text-ink-muted">{profile.email}</Text>
+        <Text className="mt-3 text-xl font-semibold text-ink">{user.full_name}</Text>
+        <Text className="text-base text-ink-muted">{user.email}</Text>
       </View>
 
-      <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">Contact</Text>
-      <Row label="Mobile">
-        <Text className="text-base text-ink">{profile.phone}</Text>
+      <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">Account</Text>
+      <Row label="Account type">
+        <Text className="text-base text-ink">{user.roles.map((r) => r.toLowerCase()).join(', ')}</Text>
       </Row>
+      <Row label="Email">
+        <Badge
+          label={user.email_verified ? 'Confirmed' : 'Not confirmed'}
+          tone={user.email_verified ? 'success' : 'warning'}
+        />
+      </Row>
+      {user.phone_number ? (
+        <Row label="Mobile">
+          <Text className="text-base text-ink">{user.phone_number}</Text>
+        </Row>
+      ) : null}
 
-      <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">
-        Verification
-      </Text>
-      <Row label="South African ID">
-        <Badge label={idStatus.label} tone={idStatus.tone} />
-      </Row>
-      <Row label="Driving licence">
-        <Badge label={licenceStatus.label} tone={licenceStatus.tone} />
-      </Row>
-      <Text className="mt-3 text-sm text-ink-muted">
-        You need an approved ID and driving licence before you can book. Document upload opens
-        in a later release.
-      </Text>
+      {user.roles.includes('RENTER') ? (
+        <>
+          <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">Verification</Text>
+          <RenterVerification />
+        </>
+      ) : null}
 
       <Button
         label="Log out"
         variant="secondary"
         className="mt-10"
-        onPress={() => router.replace('/')}
+        onPress={async () => {
+          await logout();
+          router.replace('/');
+        }}
       />
     </Screen>
   );

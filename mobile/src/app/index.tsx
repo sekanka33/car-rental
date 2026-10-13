@@ -1,12 +1,18 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
+import { LoadingState } from '@/components/ui/state-views';
 import { BRAND, COLORS } from '@/constants/brand';
+import { useAuth } from '@/context/auth';
 
 export default function WelcomeScreen() {
+  const { state } = useAuth();
+  if (state.status === 'loading') return <LoadingState />;
+  if (state.status === 'signedIn') return <Redirect href="/home" />;
+
   return (
     <Screen edgeTop className="justify-between px-6 py-10">
       <View className="flex-1 items-center justify-center">

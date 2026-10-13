@@ -13,7 +13,16 @@ Copy `.env.example` to `.env` (git-ignored) and set `EXPO_PUBLIC_API_URL` to the
 | Android emulator | `http://10.0.2.2:8000` |
 | Physical phone (Expo Go) | `http://<computer LAN IP>:8000`; start the backend with `--host 0.0.0.0` |
 
-`EXPO_PUBLIC_*` values are compiled into the app, so never put secrets in them. Restart
+`EXPO_PUBLIC_*` values are compiled into the app, so never put secrets in them.
+
+## Sign-in and sessions
+
+Login and registration call the backend (`src/services/auth.ts`, `src/context/auth.tsx`).
+Tokens are stored with **expo-secure-store** (iOS Keychain / Android Keystore). On the
+**web** build, SecureStore is unavailable, so tokens fall back to `localStorage`, which is
+acceptable for the development web preview only. The API client refreshes an expired
+access token once (concurrent requests share one refresh) and signs the user out if the
+session cannot be renewed. Logging out revokes the session on the server. Restart
 `npm start` after changing `.env`. The backend's `CORS_ORIGINS` must include the web
 origin (e.g. `http://localhost:8081`) for the web build.
 
@@ -36,13 +45,14 @@ Always add packages with `npx expo install <package>` so versions match the Expo
 ```
 src/
 ├── app/              # Expo Router routes (every file is a screen)
-│   ├── index.tsx     # Welcome
-│   ├── (auth)/       # Login, Registration
-│   ├── (tabs)/       # Home (vehicle list), Profile
-│   └── vehicles/[id].tsx
+│   ├── index.tsx     # Welcome (redirects signed-in users)
+│   ├── (auth)/       # Login, Registration (real backend accounts)
+│   ├── (tabs)/       # Home (marketplace), Bookings, Profile
+│   ├── vehicles/[id]/  # index (details), book (dates, quote, reserve)
+│   └── bookings/[id].tsx  # Booking detail, hold countdown, cancel
+├── context/          # AuthProvider / useAuth
 ├── components/       # Reusable UI (ui/) and domain components
 ├── constants/        # Branding placeholders and colour constants
-├── data/             # PROTOTYPE profile placeholder only (until Stage 14)
 ├── hooks/            # Shared hooks
 ├── lib/              # Formatting and client-side validation helpers
 ├── services/         # Backend API calls (marketplace: /api/v1/vehicles)

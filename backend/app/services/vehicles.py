@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -98,11 +98,17 @@ def get_owner_profile(session: Session, user: User) -> OwnerProfile:
 
 
 def _vehicle_query() -> Select:
-    return select(Vehicle).options(
-        selectinload(Vehicle.images),
-        selectinload(Vehicle.documents),
-        selectinload(Vehicle.prices),
-        selectinload(Vehicle.owner).selectinload(OwnerProfile.user),
+    # populate_existing: always reload the vehicle and its collections from the database,
+    # even if this session already holds an older copy (prevents stale photo/document lists).
+    return (
+        select(Vehicle)
+        .options(
+            selectinload(Vehicle.images),
+            selectinload(Vehicle.documents),
+            selectinload(Vehicle.prices),
+            selectinload(Vehicle.owner).selectinload(OwnerProfile.user),
+        )
+        .execution_options(populate_existing=True)
     )
 
 
@@ -269,7 +275,7 @@ def add_photo(
         sha256=upload.sha256,
         sort_order=next_order,
     )
-    session.add(image)
+    vehicle.images.append(image)  # keep the loaded collection in step with the database
     try:
         session.commit()
     except Exception:
@@ -330,7 +336,7 @@ def add_document(
         uploaded_by_id=user.id,
         created_at=_now(),
     )
-    session.add(document)
+    vehicle.documents.append(document)  # keep the loaded collection in step with the database
     # A new proof of ownership changes who the vehicle legally belongs to: review again.
     if (
         document_type == VehicleDocumentType.REGISTRATION_CERTIFICATE
@@ -458,6 +464,8 @@ def _overlapping_booking_exists(
             exists().where(
                 Booking.vehicle_id == vehicle_id,
                 Booking.status.in_(BLOCKING_BOOKING_STATUSES),
+                # Unpaid holds past their deadline no longer reserve dates.
+                or_(Booking.status != "PENDING_PAYMENT", Booking.hold_expires_at > _now()),
                 Booking.start_at < end,
                 Booking.end_at > start,
             )

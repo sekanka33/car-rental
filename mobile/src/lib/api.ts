@@ -1,7 +1,12 @@
 /**
- * Minimal HTTP client for the FastAPI backend. Every failure becomes an ApiError with a
- * stable `code`, so screens can show the right message without parsing responses.
+ * HTTP client for the FastAPI backend.
+ * - Every failure becomes an ApiError with a stable `code` (network, timeout, backend envelope).
+ * - Authenticated calls send the access token; on a 401 the client refreshes the session once
+ *   (concurrent refreshes share one request) and retries. If refreshing fails, the stored
+ *   session is cleared and `onSessionExpired` listeners are told.
  */
+import { clearTokens, loadTokens, saveTokens } from '@/lib/token-storage';
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
@@ -11,6 +16,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code: string,
+    readonly details: { reason?: string; [key: string]: unknown }[] = [],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -22,6 +28,13 @@ export class ApiError extends Error {
 }
 
 type QueryValue = string | number | boolean | null | undefined;
+
+interface RequestOptions {
+  params?: Record<string, QueryValue>;
+  body?: unknown;
+  auth?: boolean;
+  timeoutMs?: number;
+}
 
 export function buildUrl(path: string, params?: Record<string, QueryValue>): string {
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
@@ -37,17 +50,24 @@ export function resolveApiUrl(path: string): string {
   return buildUrl(path);
 }
 
-export async function apiGet<T>(
-  path: string,
-  params?: Record<string, QueryValue>,
-  { timeoutMs = DEFAULT_TIMEOUT_MS }: { timeoutMs?: number } = {},
-): Promise<T> {
+const sessionExpiredListeners = new Set<() => void>();
+
+export function onSessionExpired(listener: () => void): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => sessionExpiredListeners.delete(listener);
+}
+
+async function send(method: string, path: string, options: RequestOptions, accessToken?: string): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   try {
-    response = await fetch(buildUrl(path, params), {
-      headers: { Accept: 'application/json' },
+    return await fetch(buildUrl(path, options.params), {
+      method,
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: controller.signal,
     });
   } catch (error) {
@@ -62,18 +82,70 @@ export async function apiGet<T>(
   } finally {
     clearTimeout(timer);
   }
+}
 
-  if (!response.ok) {
-    let message = 'Something went wrong. Please try again.';
-    let code = 'http_error';
-    try {
-      const body = await response.json();
-      message = body?.error?.message ?? message;
-      code = body?.error?.code ?? code;
-    } catch {
-      // Not JSON (e.g. a proxy error page): keep the generic message.
-    }
-    throw new ApiError(message, response.status, code);
+async function toError(response: Response): Promise<ApiError> {
+  let message = 'Something went wrong. Please try again.';
+  let code = 'http_error';
+  let details: ApiError['details'] = [];
+  try {
+    const body = await response.json();
+    message = body?.error?.message ?? message;
+    code = body?.error?.code ?? code;
+    details = body?.error?.details ?? [];
+  } catch {
+    // Not JSON (e.g. a proxy error page): keep the generic message.
   }
+  return new ApiError(message, response.status, code, details);
+}
+
+let refreshing: Promise<string | null> | null = null;
+
+/** Exchange the refresh token for new tokens. Returns the new access token or null. */
+function refreshSession(): Promise<string | null> {
+  refreshing ??= (async () => {
+    try {
+      const tokens = await loadTokens();
+      if (!tokens) return null;
+      const response = await send('POST', '/api/v1/auth/refresh', { body: { refresh_token: tokens.refreshToken } });
+      if (!response.ok) return null;
+      const body = await response.json();
+      await saveTokens({ accessToken: body.access_token, refreshToken: body.refresh_token });
+      return body.access_token as string;
+    } catch {
+      return null;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
+}
+
+export async function apiRequest<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+  let token: string | undefined;
+  if (options.auth) {
+    token = (await loadTokens())?.accessToken;
+    if (!token) throw new ApiError('Please log in to continue.', 401, 'not_authenticated');
+  }
+  let response = await send(method, path, options, token);
+  if (options.auth && response.status === 401) {
+    const renewed = await refreshSession();
+    if (!renewed) {
+      await clearTokens();
+      sessionExpiredListeners.forEach((listener) => listener());
+      throw new ApiError('Your session has ended. Please log in again.', 401, 'session_expired');
+    }
+    response = await send(method, path, options, renewed);
+  }
+  if (!response.ok) throw await toError(response);
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+export function apiGet<T>(
+  path: string,
+  params?: Record<string, QueryValue>,
+  { timeoutMs }: { timeoutMs?: number } = {},
+): Promise<T> {
+  return apiRequest<T>('GET', path, { params, timeoutMs });
 }

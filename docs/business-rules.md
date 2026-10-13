@@ -58,7 +58,9 @@ Additional rules:
 1. The backend calculates the price. Client-sent totals are ignored.
 2. A new booking is `PENDING_PAYMENT` and holds the vehicle for `BOOKING_HOLD_MINUTES` (default 15). After that it becomes `EXPIRED` and releases the dates.
 3. No two bookings in a blocking state (`PENDING_PAYMENT`, `CONFIRMED`, `DELIVERY_SCHEDULED`, `IN_TRANSIT`, `DELIVERED`, `ACTIVE_RENTAL`, `RETURN_PENDING`) may overlap for the same vehicle. A PostgreSQL exclusion constraint enforces this, so concurrent requests cannot both succeed. Periods are half-open (`[start, end)`), so back-to-back bookings are allowed. A pending hold blocks its dates until its status changes. The booking service marks expired holds `EXPIRED` before it checks availability (Stage 10).
-4. The start date must be in the future, the end date must be after the start, and the length must be within the configured minimum and maximum.
+4. The start must be at least `BOOKING_MIN_LEAD_MINUTES` (default 120) in the future, the end must be after the start, and the rental can last at most `BOOKING_MAX_DAYS` (default 30). Times must include a timezone; the app sends South African time (`+02:00`).
+4a. A renter may hold at most `MAX_PENDING_BOOKINGS_PER_RENTER` (default 2) unpaid bookings at once, cannot book their own vehicle, and must pass the eligibility rules (BR-2) for the chosen dates. Ineligible renters receive every failing reason.
+4b. Owner date blocks (BR-3.10) also make dates unavailable. Creating a booking locks the vehicle row, so bookings and blocks for one vehicle are serialised.
 5. Allowed status transitions (refined in Stage 10):
 
 ```
@@ -69,7 +71,9 @@ PENDING_PAYMENT ─► CONFIRMED ─► DELIVERY_SCHEDULED ─► IN_TRANSIT ─
 ```
 
    Any transition not listed is rejected.
-6. Cancellation fees and refunds follow the policy from OPEN-2.
+6. Cancellation fees and refunds follow the policy from OPEN-2. **Default until OPEN-2 is decided:** the renter can cancel a `PENDING_PAYMENT` hold at any time, and a `CONFIRMED` booking up to its start time. Afterwards (or from `DELIVERY_SCHEDULED`) only an administrator can cancel, with a reason. Refund amounts are decided in Stage 11. Every cancellation records who, when and why, and is audited.
+7. Expired holds are released three ways: just before availability is checked for that vehicle, whenever bookings are listed or opened, and by the `python -m app.cli expire-holds` command (run it from cron, e.g. every minute). Marketplace availability ignores holds past their deadline even before they are marked `EXPIRED`.
+8. Implemented in `app/services/bookings.py` (Stage 10). `confirm_booking()` (`PENDING_PAYMENT` → `CONFIRMED`) is reserved for verified payments (Stage 11) and refuses holds that have expired.
 
 ## BR-6 Payments
 1. Only the backend creates payments, for the amount on the booking's price snapshot.

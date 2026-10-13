@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import VehicleDetailsScreen from '@/app/vehicles/[id]';
+import VehicleDetailsScreen from '@/app/vehicles/[id]/index';
 import { ApiError } from '@/lib/api';
 import { getAvailability, getVehicle } from '@/services/vehicles';
 
@@ -10,7 +10,7 @@ import { vehicleDetail } from './fixtures';
 jest.mock('@/services/vehicles', () => ({ getVehicle: jest.fn(), getAvailability: jest.fn() }));
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
-  router: { back: jest.fn() },
+  router: { back: jest.fn(), push: jest.fn() },
   useLocalSearchParams: () => ({ id: 'v1' }),
 }));
 

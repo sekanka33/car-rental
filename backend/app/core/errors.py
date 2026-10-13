@@ -26,9 +26,10 @@ class AppError(Exception):
     code = "bad_request"
     headers: dict[str, str] | None = None
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, details: list[dict] | None = None) -> None:
         super().__init__(message)
         self.message = message
+        self.details = details
 
 
 class NotFoundError(AppError):
@@ -75,7 +76,9 @@ def _status_code_slug(status_code: int) -> str:
 
 async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)  # noqa: S101 - registered only for AppError
-    return _error_response(exc.status_code, exc.code, exc.message, headers=exc.headers)
+    return _error_response(
+        exc.status_code, exc.code, exc.message, details=exc.details, headers=exc.headers
+    )
 
 
 async def http_exception_handler(_: Request, exc: Exception) -> JSONResponse:

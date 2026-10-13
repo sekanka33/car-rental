@@ -4,13 +4,12 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–09 complete. The mobile app's marketplace (Home and
-> Vehicle details) now shows **real vehicles and official prices from the backend**.
-> Login, registration and the profile screen are still UI-only until the app is
-> connected to authentication. The FastAPI backend runs on PostgreSQL with
-> authentication, role-based access control, renter eligibility, owner vehicle
-> registration with administrator approval, official pricing, and a public
-> marketplace API. Bookings and payments are not built yet. Commands for
+> **Current state:** Stages 01–10 complete. Renters can register and log in in the
+> mobile app, browse real listings, choose dates, see the official price, and
+> **reserve a car** (held for 15 minutes awaiting payment), then view or cancel their
+> bookings. The FastAPI backend (PostgreSQL) enforces eligibility, availability,
+> official pricing and the booking state machine. **Payment is not built yet
+> (Stage 11)**, so reservations cannot be confirmed by paying. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -111,7 +110,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 07 | Owner Profiles and Vehicle Registration | [x] COMPLETE | pytest 219/219, 9 mutation checks, live owner→admin E2E |
 | 08 | Administrator Pricing Management | [x] COMPLETE | pytest 259/259, 11 mutation checks, live E2E incl. direct-SQL tamper test |
 | 09 | Customer Marketplace | [x] COMPLETE | backend pytest 293/293; mobile jest 19/19; app↔API browser E2E 24/24; 13 + 5 mutation checks |
-| 10 | Booking and Availability | NOT STARTED | Not tested |
+| 10 | Booking and Availability | [x] COMPLETE | backend 426/426 (5 consecutive full runs); mobile 36/36; 30/30 concurrency stress; full renter journey E2E |
 | 11 | Payment Integration | NOT STARTED | Not tested |
 | 12 | Delivery Management | NOT STARTED | Not tested |
 | 13 | Google Maps and Live Tracking | NOT STARTED | Not tested |
@@ -606,7 +605,7 @@ Verification:
 - `ruff check .` and `ruff format --check .` passed. `alembic check`: no drift. No new dependencies this stage.
 
 Outstanding limitations:
-- **Intermittent test failure:** one full-suite run in 10 reported `1 failed`. I didn't capture which test, and it did not recur in 9 consecutive runs. The likeliest candidate is the threaded double-booking test, which depends on timing. To investigate if it recurs (Stage 17).
+- **Intermittent test failure:** one full-suite run in 10 reported `1 failed`, and it did not recur in 9 consecutive runs. *Resolved in Stage 10:* two causes were found and fixed (stale relationship collections in a shared session, and a PostgreSQL deadlock in a raw-insert concurrency test).
 - VAT is not broken out (OPEN-6). Prices are a single VAT-inclusive amount.
 - No public quote endpoint yet; renters will get quotes in the marketplace and booking flows (Stages 09 and 10).
 - Suspending a vehicle does not yet affect existing bookings or notify anyone (Stages 10, 12, 16).
@@ -710,6 +709,118 @@ Outstanding limitations:
 Next stage:
 - Stage 10: Booking and Availability.
 
+### Stage 10: Booking and Availability
+
+Status: COMPLETE (2026-10-13)
+
+Default for an open decision: **OPEN-2 (cancellation policy)** is undecided. Renters can cancel unpaid holds at any time and confirmed bookings until the start; after that only an administrator can cancel. Refund amounts are left to Stage 11.
+
+Scope note: booking needs a signed-in renter, so this stage also connected the app's **login, registration, secure session storage and logout** to the backend. That was previously planned for Stage 14. Document upload in the app remains Stage 14.
+
+Implemented:
+
+**Backend:**
+- **`POST /api/v1/bookings`** (renter only) checks, in one transaction:
+  - The period (timezone required; at least 2 h lead time; at most 30 days).
+  - Eligibility from Stage 06; failures return 403 with **every reason**.
+  - The vehicle is listed (404 otherwise) and is not the renter's own.
+  - Stale holds are expired; at most 2 unpaid holds per renter; owner date blocks are respected.
+  - The vehicle row is **locked**, then the booking is inserted; the exclusion constraint returns 409 `vehicle_unavailable` on overlap.
+  - The **official price breakdown** is calculated by the backend and stored.
+  - The booking is `PENDING_PAYMENT` with a 15-minute hold, a `BK…` reference, and an audit entry.
+- **State machine:** BR-5.5 transitions defined in one table and enforced everywhere.
+- **Confirmation:** `confirm_booking()` is ready for Stage 11 and refuses expired holds.
+- **Hold expiry:** lazy on reads and before availability checks, plus `python -m app.cli expire-holds` for cron. The marketplace ignores expired holds immediately.
+- **Booking history and detail:** own bookings only (others → 404).
+- **Cancellation:**
+  - Renter: holds any time, confirmed bookings before the start.
+  - Admin: with a required reason.
+  - `cancelled_by`, `cancelled_at` and the reason are recorded; audited; the dates are released.
+- **Admin booking list and detail.**
+- **Migration `76421ebbad3d`:** `confirmed_at`, `cancelled_by_id`, and a cancellation consistency CHECK (added by hand).
+- `AppError` can carry `details` (used for eligibility reasons).
+- **New settings:** `BOOKING_HOLD_MINUTES`, `BOOKING_MIN_LEAD_MINUTES`, `BOOKING_MAX_DAYS`, `MAX_PENDING_BOOKINGS_PER_RENTER`.
+
+**Mobile:**
+- **Real authentication:**
+  - Registration and login against the API.
+  - Tokens in **expo-secure-store**; web falls back to `localStorage` (development preview only).
+  - Automatic access-token refresh: one shared refresh, then retry; sign-out if renewal fails.
+  - Logout revokes the server session.
+  - The welcome screen redirects signed-in users.
+- **Profile:** the real account, email confirmation state, and ID and licence verification status. The prototype profile data is **deleted**; the app now has no sample data at all.
+- **Booking screen** (`/vehicles/[id]/book`):
+  - Start day (next 30 days), delivery time and length chips, all in South African time.
+  - Live backend quote and availability; delivery address.
+  - Reserve; ineligible renters see each requirement in plain language.
+- **Bookings tab:** history with status badges and totals. **Booking detail:** agreed price breakdown, hold countdown, and a two-tap cancel.
+- **New tests:** API auth and refresh, South African date helpers, the booking flow, the bookings list and detail.
+
+Files changed:
+- Backend:
+  - New: `app/services/bookings.py`, `app/schemas/bookings.py`, `app/api/routes/{bookings,admin_bookings}.py`, `migrations/versions/2026_10_13_1401-76421ebbad3d_add_booking_confirmation_and_.py`, `tests/bookings/` (helpers, state machine, API, concurrency)
+  - Modified: `app/models/booking.py`, `app/core/{config,errors}.py`, `app/services/{marketplace,vehicles}.py`, `app/cli.py`, `app/api/router.py`, `.env.example`, `tests/db/{factories,test_concurrency}.py`
+- Mobile:
+  - New: `src/lib/{token-storage,dates,eligibility}.ts`, `src/context/auth.tsx`, `src/services/{auth,bookings,customers}.ts`, `src/types/{auth,booking}.ts`, `src/components/{sign-in-prompt,booking-status-badge}.tsx`, `src/app/(tabs)/bookings.tsx`, `src/app/vehicles/[id]/book.tsx`, `src/app/bookings/[id].tsx`, `__tests__/{api-auth,dates,booking-flow}.test.*`
+  - Changed: `src/lib/api.ts` (authenticated requests, refresh), `src/app/_layout.tsx`, `src/app/index.tsx`, `src/app/(auth)/{login,register}.tsx`, `src/app/(tabs)/{_layout,profile}.tsx`, `src/components/ui/notice.tsx`, `src/types/profile.ts`, `jest.setup.ts`, `package.json` (expo-secure-store)
+  - Moved: `src/app/vehicles/[id].tsx` → `src/app/vehicles/[id]/index.tsx`
+  - Deleted: `src/data/sample-profile.ts`
+- Docs: all READMEs, `docs/business-rules.md` (BR-5), `docs/requirements.md` (OPEN-2), `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **426 passed, 0 skipped, 0 failed**, in **5 consecutive full runs** (133 new). Covered:
+  - State machine: all 100 status pairs checked against BR-5.5.
+  - Creation: price breakdown and hold; client price, status or renter fields → 422; current official price used.
+  - Eligibility: an ineligible renter gets all reasons; licence must outlast the rental; renters only; unlisted → 404; own vehicle → 403; 5 invalid periods.
+  - Availability: overlap 409 but back-to-back allowed; owner block 409; an expired hold releases its dates in booking **and** marketplace; pending limit.
+  - Privacy: history is private.
+  - Cancellation: renter rules, expired holds, after start, admin with reason.
+  - Confirmation rules; expiry counts; exact decimals (R333.33 × 3 = R999.99).
+  - **Service-level concurrency:** two renters at the same instant → exactly one booking.
+- **Concurrency stress:** the service-level test passed **30/30** runs.
+- **Backend mutation checks:** each of these changes made tests **fail**:
+  - eligibility skipped
+  - stale holds not expired
+  - blocks ignored
+  - pending limit
+  - own vehicle
+  - lead time
+  - other renters' bookings readable
+  - cancel after start
+  - extra transition
+  - expired hold confirmable
+  - wrong price period
+  - expired holds blocking the marketplace
+- **Mobile:** `npm test` **36 passed** (7 suites); typecheck 0 errors; lint clean; `expo-doctor` 21/21.
+- **Mobile mutation checks:** each of these made tests **fail**: no retry after refresh, refresh not shared, tokens kept after a failed refresh, duration ignored, cancel without confirmation, wrong timezone offset.
+- **Full renter journey end to end** (throwaway database with demo data and a CLI admin, real uvicorn, Expo web, headless Chromium):
+  1. **Register in the app:** signed in, real profile, email shown as not confirmed. Reserving shows plain-language reasons (confirm email, date of birth, ID, licence).
+  2. **Become eligible through real flows:** email link from the server log, date of birth, ID (valid SA ID) and licence uploads, admin approval → eligibility `{"eligible": true}`.
+  3. **Book in the app:** log in; quote R750 × 3 + R150 = R2 400; switching to 5 days re-quotes R3 900; reserve → "Awaiting payment", "held for 15 more minutes"; the session survives a page reload; My bookings lists it.
+  4. **Database:** the stored booking is `PENDING_PAYMENT`, 5 days, R750 / R3 750 / R3 900 / deposit R2 000, 10:00 SAST, 15-minute hold. A clashing booking for the same car is rejected (`vehicle_unavailable`) and the marketplace shows it unavailable.
+  5. **Cancel and log out:** two-tap cancel in the app → Cancelled; the same dates become available again; the profile shows both documents approved; logging out makes Bookings require login again and revokes that session's refresh token.
+  - Audit trail `booking.created, booking.cancelled`. Everything was removed afterwards; your existing dev server on port 8081 was not touched.
+- **Problems found and fixed during the stage:**
+  - **Stale photo and document collections:** a vehicle already loaded in a session kept outdated photo and document lists after an upload. It depended on garbage collection, so the Stage 07 test failed intermittently. Fixed by appending through the relationship and reloading vehicles with `populate_existing`.
+  - **Deadlock in the Stage 04 raw-insert concurrency test:** two transactions inserting overlapping bookings at the same instant without a lock can deadlock in PostgreSQL. One is aborted, and **integrity is preserved** (one booking). The test now accepts that abort as a valid rejection. The booking service locks the vehicle row first, so it is not affected (30/30 stress runs).
+  - These two causes very likely explain the unexplained one-off failure recorded in Stage 08.
+  - Two React-Compiler lint errors (clock read during render; setState called from an effect) were fixed by restructuring, not by disabling the rules.
+  - The registration submit handler was missing `async`.
+  - Testing Library's hoisted mocks: the router mock is now created inside the factory.
+  - The eligibility error no longer mentions API jargon ("details").
+
+Outstanding limitations:
+- **No payment yet (Stage 11):** every reservation expires after 15 minutes unless an operator confirms it. Refund amounts for cancelled paid bookings are not defined (OPEN-2).
+- **Holds expire lazily plus via `expire-holds`.** Production must schedule that command (e.g. cron every minute; Stage 18).
+- Mobile: no document upload screens yet (Stage 14), so new renters cannot become eligible from the app alone. Not tested on a physical device. On web, tokens live in `localStorage` (development preview only).
+- Owners cannot yet see bookings of their vehicles in the app (Stage 14). Unlisting or suspending a vehicle does not notify affected renters (Stage 16).
+- Date selection uses chips (next 30 days, fixed delivery times) rather than a calendar.
+- No rate limiting on booking creation (Stage 17).
+- Mobile `npm audit` is unchanged in kind: 6 root advisories in Expo build and test tooling (Stage 17).
+
+Next stage:
+- Stage 11: Payment Integration.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -761,7 +872,8 @@ python -m app.cli create-admin --email you@example.com --full-name "Your Name"  
 - **Root (Docker Compose):** `.env.example` lists `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, and `POSTGRES_PORT`. Use a random password, e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
 - **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, `DATABASE_ECHO`, `JWT_SECRET_KEY` (required; generate a random 64-byte value), token lifetimes, `EMAIL_BACKEND` (`console` or `smtp`), `EMAIL_FROM`, `SMTP_*`, `APP_LINK_BASE_URL`, `MIN_RENTER_AGE`, `DOCUMENT_HASH_KEY` (required; generate once and keep), `DOCUMENT_STORAGE_DIR`, and `MAX_DOCUMENT_BYTES`. See [backend/README.md](backend/README.md#configuration).
 - Production refuses to start with `EMAIL_BACKEND=console`, and `JWT_SECRET_KEY` must be at least 32 characters.
-- **Mobile:** no environment variables yet. The API URL is added in Stage 09.
+- **Mobile:** `mobile/.env.example` contains `EXPO_PUBLIC_API_URL` (the backend URL; never put secrets in `EXPO_PUBLIC_*`).
+- Booking limits: `BOOKING_HOLD_MINUTES`, `BOOKING_MIN_LEAD_MINUTES`, `BOOKING_MAX_DAYS`, `MAX_PENDING_BOOKINGS_PER_RENTER` (backend).
 
 ## 11. Database Setup
 
@@ -795,8 +907,10 @@ npm run web        # open directly in the browser
 The marketplace screens load vehicles from the backend, so start the API first. For
 demo listings run `APP_ENV=development python -m app.cli seed-demo-data` in `backend/`.
 Copy `mobile/.env.example` to `mobile/.env` and set `EXPO_PUBLIC_API_URL` (default
-`http://localhost:8000`; use the computer's LAN IP for a physical phone). Sign-in is not
-connected yet. See [mobile/README.md](mobile/README.md). Add packages with
+`http://localhost:8000`; use the computer's LAN IP for a physical phone). Accounts, login
+and bookings use the real backend. A renter must be verified (date of birth, ID, licence
+approved by an administrator) before booking; document upload is still API-only (see
+[backend/README.md](backend/README.md)). See [mobile/README.md](mobile/README.md). Add packages with
 `npx expo install <package>` so versions stay compatible with SDK 57.
 
 ## 13. Running the Python Backend
@@ -858,7 +972,8 @@ owner profile and vehicles (`/owners/me/...`: registration, photos, documents,
 submit and withdraw, listing, availability blocks); admin vehicle management
 (`/admin/vehicles`: queue, detail, audited document view, approve, reject, suspend,
 reinstate, official price history, set price, quote); **public marketplace**
-(`/vehicles`: search and filters, details, photos, availability, quote); renter profile, date of birth, document upload and
+(`/vehicles`: search and filters, details, photos, availability, quote); **bookings**
+(`/bookings`: create, history, detail, cancel; `/admin/bookings`: list, detail, cancel); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -891,23 +1006,25 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
 - Prices are VAT-inclusive with no VAT breakdown (OPEN-6). The public marketplace has no rate limiting yet (Stage 17).
-- One unexplained intermittent test failure was seen in 10 full runs (see the Stage 08 summary).
+- The intermittent test failure seen in Stage 08 has been traced to two causes and fixed in Stage 10 (see its summary); the suite then passed 5 full runs in a row.
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
-- Mobile app: not yet run on a physical device or emulator (web verified against the real API). Login, registration and profile are UI-only until Stage 14; the marketplace uses real backend data.
+- Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload screens come in Stage 14. On web, session tokens are kept in `localStorage` (development preview only).
+- **No payments yet (Stage 11):** reservations expire after 15 minutes. Schedule `python -m app.cli expire-holds` in production.
 - Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–09 are COMPLETE. The backend (PostgreSQL 16) provides authentication and authorisation, renter eligibility, owner vehicle registration with approval and suspension, official pricing, and a public marketplace API, with 293 passing tests. The mobile marketplace screens use real backend data, with 19 passing mobile tests. Stage 10 has not started.
+Stages 01–10 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace and bookings (holds, state machine, cancellation), with 426 passing tests. The mobile app has real accounts, the marketplace, booking and My bookings, with 36 passing tests. Payments (Stage 11) have not started.
 
 ## 20. Next Stage
 
-**Stage 10: Booking and Availability.** Rental date selection; booking creation
-with backend eligibility checks (Stage 06) and backend price calculation
-(Stage 08); temporary `PENDING_PAYMENT` holds with expiry (marking stale holds
-`EXPIRED` before availability checks); overlap prevention (database exclusion
-constraint and concurrency tests); cancellation; booking history; the stored
-price breakdown; and enforced status transitions. Open decision OPEN-2
-(cancellation and refund policy) affects cancellation rules. Waiting for owner
-approval to begin.
+**Stage 11: Payment Integration.** Choose a South African ZAR payment provider
+(OPEN-8; candidates Paystack, PayFast, Peach Payments, Ozow); backend payment
+initiation for a `PENDING_PAYMENT` booking; payment records; signed webhook or ITN
+verification; idempotent event processing; confirming bookings through
+`confirm_booking()`; failed, pending and late (after hold expiry) payments; refunds
+where supported; reconciliation; and settlement and payout documentation. **Only
+the provider's sandbox will be used; no real money moves without your explicit
+approval.** Provider credentials (sandbox keys) will be needed from you. Waiting
+for owner approval to begin.

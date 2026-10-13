@@ -77,6 +77,15 @@ def seed_demo_command(session: Session, settings) -> int:
     return 0
 
 
+def expire_holds_command(session: Session) -> int:
+    from app.services.bookings import expire_stale_holds
+
+    count = expire_stale_holds(session)
+    session.commit()
+    print(f"Expired {count} unpaid booking hold(s).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -85,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_argument("--full-name", required=True)
     admin.add_argument(
         "--password-stdin", action="store_true", help="Read the password from standard input"
+    )
+    commands.add_parser(
+        "expire-holds",
+        help="Mark unpaid booking holds past their deadline as EXPIRED (run from cron)",
     )
     commands.add_parser(
         "seed-demo-data",
@@ -101,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         with build_session_factory(engine)() as session:
             if args.command == "seed-demo-data":
                 return seed_demo_command(session, settings)
+            if args.command == "expire-holds":
+                return expire_holds_command(session)
             return create_admin_command(
                 session,
                 email=args.email,
