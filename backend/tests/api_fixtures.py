@@ -33,10 +33,24 @@ def storage() -> InMemoryDocumentStorage:
 
 
 @pytest.fixture
+def payment_provider():
+    """No payment provider unless a test package overrides this fixture."""
+    return None
+
+
+@pytest.fixture
 def api_app(
-    db_session: Session, outbox: InMemoryEmailSender, storage: InMemoryDocumentStorage
+    db_session: Session,
+    outbox: InMemoryEmailSender,
+    storage: InMemoryDocumentStorage,
+    payment_provider,
 ) -> FastAPI:
-    app = create_app(make_settings(), email_sender=outbox, document_storage=storage)
+    app = create_app(
+        make_settings(),
+        email_sender=outbox,
+        document_storage=storage,
+        payment_provider=payment_provider,
+    )
 
     def _test_db() -> Iterator[Session]:
         try:

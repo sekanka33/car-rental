@@ -75,12 +75,21 @@ BLOCKING_BOOKING_STATUSES: tuple[BookingStatus, ...] = (
 
 
 class PaymentStatus(StrEnum):
-    PENDING = "PENDING"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
+    PENDING = "PENDING"  # created; customer has not completed checkout (or result unknown)
+    SUCCEEDED = "SUCCEEDED"  # verified with the provider and applied to the booking
+    FAILED = "FAILED"  # declined, abandoned, or rejected (e.g. amount mismatch)
     CANCELLED = "CANCELLED"
+    REFUND_PENDING = (
+        "REFUND_PENDING"  # money received but being returned (late/duplicate/cancelled)
+    )
     REFUNDED = "REFUNDED"
     PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
+
+
+class RefundStatus(StrEnum):
+    PENDING = "PENDING"  # requested; provider still processing
+    PROCESSED = "PROCESSED"
+    FAILED = "FAILED"
 
 
 class DeliveryStatus(StrEnum):

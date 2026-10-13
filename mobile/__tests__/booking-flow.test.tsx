@@ -7,8 +7,10 @@ import BookVehicleScreen from '@/app/vehicles/[id]/book';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
 import { cancelBooking, createBooking, getBooking, getQuote, listMyBookings } from '@/services/bookings';
+import { listBookingPayments, refreshPayment, startPayment } from '@/services/payments';
 import { getVehicle } from '@/services/vehicles';
 import type { Booking } from '@/types/booking';
+import type { Payment } from '@/types/payment';
 
 import { vehicleDetail } from './fixtures';
 
@@ -21,6 +23,17 @@ jest.mock('@/services/bookings', () => ({
   getBooking: jest.fn(),
   cancelBooking: jest.fn(),
 }));
+jest.mock('@/services/payments', () => ({
+  startPayment: jest.fn(),
+  refreshPayment: jest.fn(),
+  listBookingPayments: jest.fn(),
+}));
+jest.mock('expo-web-browser', () => ({
+  openAuthSessionAsync: jest.fn(async () => ({ type: 'success' })),
+  maybeCompleteAuthSession: jest.fn(),
+}));
+jest.mock('expo-linking', () => ({ createURL: (path: string) => `carrental://${path}` }));
+const mockBrowser = jest.requireMock('expo-web-browser') as { openAuthSessionAsync: jest.Mock };
 // jest.mock factories run before this file's own variables exist, so the router mock
 // is created inside the factory and read back through the mocked module.
 jest.mock('expo-router', () => ({
@@ -53,7 +66,17 @@ function booking(overrides: Partial<Booking> = {}): Booking {
   };
 }
 
+function payment(overrides: Partial<Payment> = {}): Payment {
+  return {
+    id: 'p1', booking_id: 'b1', reference: 'PAYABC', provider: 'paystack', status: 'PENDING',
+    amount: '2400.00', currency: 'ZAR', checkout_url: 'https://checkout.test/PAYABC', paid_at: null,
+    failure_reason: null, created_at: '', refunds: [], booking_status: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
+  (listBookingPayments as jest.Mock).mockResolvedValue([]);
   (useAuth as jest.Mock).mockReturnValue(signedIn);
   (getVehicle as jest.Mock).mockResolvedValue(vehicleDetail());
   (getQuote as jest.Mock).mockResolvedValue(QUOTE);
@@ -151,5 +174,67 @@ describe('my bookings', () => {
 
     expect(cancelBooking).toHaveBeenCalledWith('b1', 'Cancelled in the app');
     expect(await screen.findByText('Cancelled: Cancelled in the app')).toBeTruthy();
+  });
+});
+
+describe('paying for a booking', () => {
+  it('opens checkout and confirms only after the backend verifies the payment', async () => {
+    (getBooking as jest.Mock)
+      .mockResolvedValueOnce(booking())
+      .mockResolvedValueOnce(booking({ status: 'CONFIRMED', hold_expires_at: null }));
+    (listBookingPayments as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([payment({ status: 'SUCCEEDED', checkout_url: null, paid_at: '2026-10-13T12:00:00+02:00' })]);
+    (startPayment as jest.Mock).mockResolvedValue(payment());
+    (refreshPayment as jest.Mock).mockResolvedValue(payment({ status: 'SUCCEEDED', checkout_url: null }));
+    await wrap(<BookingScreen />);
+
+    await fireEvent.press(await screen.findByText('Pay R 2 400.00'));
+
+    expect(startPayment).toHaveBeenCalledWith('b1');
+    expect(mockBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
+      'https://checkout.test/PAYABC',
+      'carrental://payments/return',
+    );
+    expect(refreshPayment).toHaveBeenCalledWith('p1');
+    expect(await screen.findByText('Confirmed')).toBeTruthy();
+    expect(screen.getByText('Paid · PAYABC')).toBeTruthy();
+    expect(screen.queryByText(/^Pay R/)).toBeNull();
+  });
+
+  it('explains a declined payment and lets the renter try again', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking());
+    (startPayment as jest.Mock).mockResolvedValue(payment());
+    (refreshPayment as jest.Mock).mockResolvedValue(
+      payment({ status: 'FAILED', checkout_url: null, failure_reason: 'Declined' }),
+    );
+    await wrap(<BookingScreen />);
+
+    await fireEvent.press(await screen.findByText('Pay R 2 400.00'));
+
+    expect(await screen.findByText('Declined')).toBeTruthy();
+    expect(await screen.findByText('Pay R 2 400.00')).toBeTruthy();
+  });
+
+  it('does not offer payment once the hold has expired', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking({ hold_expires_at: new Date(Date.now() - 60_000).toISOString() }));
+    await wrap(<BookingScreen />);
+
+    expect(await screen.findByText(/held for you for 0 more minutes/)).toBeTruthy();
+    expect(screen.queryByText(/^Pay R/)).toBeNull();
+  });
+
+  it('shows refunds on a cancelled paid booking', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking({ status: 'CANCELLED', hold_expires_at: null }));
+    (listBookingPayments as jest.Mock).mockResolvedValue([
+      payment({
+        status: 'REFUNDED', checkout_url: null,
+        refunds: [{ id: 'r1', amount: '2400.00', currency: 'ZAR', status: 'PROCESSED', reason: 'Booking cancelled', created_at: '', processed_at: '' }],
+      }),
+    ]);
+    await wrap(<BookingScreen />);
+
+    expect(await screen.findByText('Refunded · PAYABC')).toBeTruthy();
+    expect(screen.getByText('− R 2 400.00')).toBeTruthy();
   });
 });

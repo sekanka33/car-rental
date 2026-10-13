@@ -4,12 +4,12 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–10 complete. Renters can register and log in in the
-> mobile app, browse real listings, choose dates, see the official price, and
-> **reserve a car** (held for 15 minutes awaiting payment), then view or cancel their
-> bookings. The FastAPI backend (PostgreSQL) enforces eligibility, availability,
-> official pricing and the booking state machine. **Payment is not built yet
-> (Stage 11)**, so reservations cannot be confirmed by paying. Commands for
+> **Current state:** Stages 01–11 complete. Renters can register and log in in the
+> mobile app, browse real listings, choose dates, see the official price, **reserve a
+> car and pay for it** (Paystack checkout, verified by the backend), then view, cancel
+> and get refunds for their bookings. The FastAPI backend (PostgreSQL) enforces
+> eligibility, availability, official pricing, the booking state machine and payment
+> verification. Payments run in **test mode only** until live keys are approved. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -41,7 +41,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 | Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
 | Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
-| Payments | South African ZAR provider. Candidates: Paystack, PayFast, Peach Payments, Ozow. Decided in Stage 11. |
+| Payments | Paystack (ZAR), behind a `PaymentProvider` interface; test keys only until live payments are approved (OPEN-8). Mobile checkout via expo-web-browser |
 | Maps | Google Maps Platform (Maps SDKs, Routes API) |
 | Tooling | Git, npm, Python venv, ESLint, TypeScript, environment variables |
 
@@ -111,7 +111,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 08 | Administrator Pricing Management | [x] COMPLETE | pytest 259/259, 11 mutation checks, live E2E incl. direct-SQL tamper test |
 | 09 | Customer Marketplace | [x] COMPLETE | backend pytest 293/293; mobile jest 19/19; app↔API browser E2E 24/24; 13 + 5 mutation checks |
 | 10 | Booking and Availability | [x] COMPLETE | backend 426/426 (5 consecutive full runs); mobile 36/36; 30/30 concurrency stress; full renter journey E2E |
-| 11 | Payment Integration | NOT STARTED | Not tested |
+| 11 | Payment Integration | [x] COMPLETE | backend 476/476; mobile 40/40; 9/10 mutations caught (1 equivalent); live E2E 16/16 against a Paystack stand-in |
 | 12 | Delivery Management | NOT STARTED | Not tested |
 | 13 | Google Maps and Live Tracking | NOT STARTED | Not tested |
 | 14 | Customer and Owner Dashboards | NOT STARTED | Not tested |
@@ -821,6 +821,68 @@ Outstanding limitations:
 Next stage:
 - Stage 11: Payment Integration.
 
+### Stage 11: Payment Integration
+
+Status: COMPLETE (2026-10-13)
+
+Defaults for open decisions (all configurable later; recorded in `docs/requirements.md`):
+- **OPEN-8 provider: Paystack**, behind a `PaymentProvider` interface. Chosen for its documented HMAC-signed webhooks, verify and refund APIs, and ZAR support. The merchant agreement and fees must still be confirmed before going live.
+- **OPEN-2 refunds:** a cancelled paid booking is refunded **in full** (renter before the start; administrator at any time). Administrators can also make partial refunds.
+- **OPEN-7 deposit:** the deposit is **not charged online**. The checkout charges the booking total (rental plus delivery fee); the deposit is arranged at handover until a holding mechanism is chosen.
+- **OPEN-1 payouts:** the platform collects as merchant of record; owner payouts are settled outside the system for now (see BR-6 payout notes).
+
+Implemented:
+
+**Backend:**
+- **`POST /api/v1/bookings/{id}/payments`** (renter): starts Paystack checkout for a `PENDING_PAYMENT` booking, for the **stored booking total** (any client amount is ignored). It reuses an open checkout instead of creating a second one, refuses expired holds and other states (409), and returns 503 when payments are not configured and 502 when Paystack is down.
+- **Verification:** a payment becomes `SUCCEEDED` only after the backend calls Paystack's verify API and the **reference, amount (in cents) and currency all match**. A mismatch is marked `FAILED`, audited and logged for review, never applied. Success confirms the booking through `confirm_booking()` in the same transaction.
+- **Webhook `POST /api/v1/payments/webhooks/paystack`:** HMAC-SHA512 signature over the raw body (401 otherwise). Each event is stored once (unique SHA-256 of the body), so **re-deliveries are no-ops**. The payload only *triggers* verification and is never trusted. Stored payloads keep only reconciliation fields (no card or customer data, for POPIA).
+- **Late or duplicate money (BR-6.5):** a payment that succeeds after the hold expired, after cancellation, or for an already-paid booking becomes `REFUND_PENDING` and is **refunded automatically**.
+- **Refunds:** `refunds` table linked to payments; full or partial; audited. Admin `POST /api/v1/admin/payments/{id}/refunds`. Cancelling a paid booking (renter or admin) refunds it in full. Refund state follows Paystack (`PENDING` → `PROCESSED`/`FAILED`) through webhooks or reconciliation; payments move to `PARTIALLY_REFUNDED` / `REFUNDED`.
+- **Reconciliation:** `python -m app.cli reconcile-payments` (cron) and `POST /api/v1/admin/payments/reconcile` re-check pending payments and refunds, which catches lost webhooks. `POST /api/v1/payments/{id}/refresh` lets a renter returning from checkout verify immediately.
+- **Admin list** `GET /api/v1/admin/payments[?status=&booking_id=]`; renter `GET /api/v1/bookings/{id}/payments`.
+- **Safety switch:** only `sk_test_…` keys are accepted. A live key makes the app **refuse to start** unless `ALLOW_LIVE_PAYMENTS=true`.
+- **Migration `7896d127780b`:** `payment_events`, `refunds`, and payment tracking columns (checkout URL, transaction id, last verified, initiated by).
+- **New settings:** `PAYSTACK_SECRET_KEY`, `PAYSTACK_PUBLIC_KEY`, `PAYSTACK_BASE_URL`, `ALLOW_LIVE_PAYMENTS`, `PAYMENT_CALLBACK_URL`. `httpx2` moved from dev to runtime requirements (the Paystack client).
+
+**Mobile:**
+- Booking detail shows **"Pay R…"** while the hold is live. It opens checkout with `expo-web-browser`, then asks the backend to verify; the browser result is never trusted. Declined payments explain themselves and can be retried; unconfirmed ones say so.
+- **Payment history** on the booking: paid, refunded, and refund in progress amounts.
+- **`/payments/return`** screen: the checkout return page (`?payment_id=`). It completes the web popup and shows the verified result.
+- Copy updated: the deposit is not charged online; cancelling before the trip refunds in full.
+
+Files changed:
+- Backend:
+  - New: `app/integrations/payments.py`, `app/services/payments.py`, `app/schemas/payments.py`, `app/api/routes/{payments,admin_payments}.py`, `migrations/versions/2026_10_13_1500-7896d127780b_add_payment_events_refunds_and_payment_.py`, `tests/payments/` (fake provider, Paystack adapter tests, flow tests)
+  - Modified: `app/models/{payment,enums,__init__}.py`, `app/core/config.py`, `app/main.py`, `app/api/{deps,router}.py`, `app/api/routes/{bookings,admin_bookings}.py`, `app/cli.py`, `.env.example`, `requirements*.txt`, `tests/{api_fixtures,auth/test_access_control,db/test_migrations}.py`
+- Mobile:
+  - New: `src/types/payment.ts`, `src/services/payments.ts`, `src/app/payments/return.tsx`
+  - Changed: `src/app/bookings/[id].tsx`, `src/app/vehicles/[id]/book.tsx`, `src/app/_layout.tsx`, `__tests__/booking-flow.test.tsx`, `app.json` and `package.json` (expo-web-browser)
+- Docs: all READMEs, `docs/business-rules.md` (BR-5, BR-6), `docs/requirements.md` (OPEN-1, 2, 7, 8), `docs/architecture.md`, `docs/development-roadmap.md`
+
+Verification (sandbox or test doubles only; **no real money moved**):
+- **Backend** `pytest -ra`: **476 passed, 0 skipped, 0 failed** (50 new). Covered:
+  - Paystack adapter against recorded HTTP shapes: integer cents in ZAR, conservative status mapping (only `success` is paid), refunds, HTTP and network errors, HMAC-SHA512 webhook signatures, the live-key guard.
+  - Flows: the checkout amount comes from the booking; open checkout reuse; state rules; provider outage; payments disabled; only verified payments confirm; failed then retry; mismatch flagged; late payment and duplicate payment refunded; verify outage leaves the payment pending; signed, forged, replayed and unknown-reference webhooks; untrusted payload; partial and full refunds; refund rules and provider failure; cancellation refunds (renter and admin); reconciliation of missed webhooks; privacy between renters; the return URL carries the payment id.
+- **Mutation checks:** 9 of 10 caught (amount check removed, signature check removed, expired hold confirmed, re-delivery reprocessed, second checkout opened, deposit charged, over-refund, pending treated as paid, final payment reprocessed). The tenth (dropping the duplicate-payment branch) is equivalent: the booking is already confirmed, so the payment is refunded for the same reason.
+- **Mobile:** `npm test` **40 passed** (4 new: pay and confirm, decline and retry, no pay button after expiry, refunds shown); typecheck 0 errors; lint clean; `expo-doctor` 21/21.
+- **Live end to end, 16/16:** a real uvicorn server talking HTTP to a local Paystack stand-in using a `sk_test_` key. It covered: checkout for the booking total with the client amount ignored; a forged webhook rejected with the booking still unpaid; pay → signed webhook → booking `CONFIRMED`; the redirect carries `payment_id`; a replayed webhook stored once; cancel → full refund → refund webhook → `REFUNDED`; a declined payment leaves the hold and a retry gets a new checkout; a lost webhook is caught by `reconcile-payments`. Stored webhook payloads contain no card or customer data.
+- `alembic upgrade` / `downgrade -1` / `upgrade` round trip and `alembic check` clean.
+- **Problems found and fixed during the stage:**
+  - The test fake provider did not record `callback_url`.
+  - Refund webhooks without a refund id we know now re-check that payment's pending refunds instead of being ignored.
+  - In the app, a declined payment's message disappeared because the screen reloaded; the screen now reloads only when the booking actually changed.
+
+Outstanding limitations:
+- **Not yet run against the real Paystack sandbox:** no test keys were available. Before launch, set `PAYSTACK_SECRET_KEY=sk_test_…`, point the Paystack dashboard webhook at `/api/v1/payments/webhooks/paystack` (public HTTPS), and repeat the E2E. **Live keys need your explicit approval** (`ALLOW_LIVE_PAYMENTS`).
+- Payments whose verified amount does not match are marked `FAILED` for review. The admin API cannot refund them; handle them in the Paystack dashboard.
+- On a phone, Paystack returns to an `http(s)` URL, so the in-app browser does not close by itself. The renter closes it and the app then verifies the payment. Not yet tested on a device. The pay flow was tested with Jest, not in a real browser.
+- `reconcile-payments` and `expire-holds` must be scheduled in production (Stage 18). Without a configured provider, cancelling a paid booking logs an error and does not refund.
+- No payment receipts or refund emails yet (Stage 16). No owner payout automation (OPEN-1). The security deposit is not collected online (OPEN-7). There is no admin payments UI until Stage 15.
+
+Next stage:
+- Stage 12: Delivery Management.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -836,7 +898,7 @@ Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
 
 To run the mobile app on a device: the **Expo Go** app (must support SDK 57),
 or an Android emulator or iOS simulator. Needed in later stages: Google Maps
-Platform API keys (Stage 13) and payment provider sandbox credentials (Stage 11).
+Platform API keys (Stage 13) and Paystack **test** keys (`sk_test_…`) to exercise payments against the real sandbox.
 
 ## 9. Installation Instructions
 
@@ -874,6 +936,7 @@ python -m app.cli create-admin --email you@example.com --full-name "Your Name"  
 - Production refuses to start with `EMAIL_BACKEND=console`, and `JWT_SECRET_KEY` must be at least 32 characters.
 - **Mobile:** `mobile/.env.example` contains `EXPO_PUBLIC_API_URL` (the backend URL; never put secrets in `EXPO_PUBLIC_*`).
 - Booking limits: `BOOKING_HOLD_MINUTES`, `BOOKING_MIN_LEAD_MINUTES`, `BOOKING_MAX_DAYS`, `MAX_PENDING_BOOKINGS_PER_RENTER` (backend).
+- Payments: `PAYSTACK_SECRET_KEY` (empty disables online payment; only `sk_test_…` unless `ALLOW_LIVE_PAYMENTS=true`), `PAYSTACK_BASE_URL`, `PAYMENT_CALLBACK_URL` (backend).
 
 ## 11. Database Setup
 
@@ -973,7 +1036,9 @@ submit and withdraw, listing, availability blocks); admin vehicle management
 (`/admin/vehicles`: queue, detail, audited document view, approve, reject, suspend,
 reinstate, official price history, set price, quote); **public marketplace**
 (`/vehicles`: search and filters, details, photos, availability, quote); **bookings**
-(`/bookings`: create, history, detail, cancel; `/admin/bookings`: list, detail, cancel); renter profile, date of birth, document upload and
+(`/bookings`: create, history, detail, cancel; `/admin/bookings`: list, detail, cancel); **payments**
+(`/bookings/{id}/payments`: start checkout, list; `/payments/{id}/refresh`; the signed Paystack webhook;
+`/admin/payments`: list, refund, reconcile); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -988,7 +1053,7 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - Suspension, password reset, and logout-all invalidate all of a user's sessions immediately. Login and reset responses do not reveal whether an email is registered.
 - An automated test checks that every non-public endpoint rejects anonymous requests.
 - ID and licence documents are stored privately, access is logged, and their numbers never appear in public APIs or logs (POPIA).
-- Money is stored as exact decimals in ZAR. Payments are verified by signed webhooks and processed idempotently.
+- Money is stored as exact decimals in ZAR. Webhooks are HMAC-verified and de-duplicated, and a payment counts only after the backend itself verifies the reference, amount and currency with Paystack. Live payment keys are refused unless `ALLOW_LIVE_PAYMENTS=true`.
 - Location sharing is limited to the assigned delivery person while a delivery is active, and is visible only to the booking's renter and administrators.
 - Secrets live only in environment variables. HTTPS is required in production.
 - No real financial transactions or production deployments happen without explicit owner approval.
@@ -1010,21 +1075,18 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload screens come in Stage 14. On web, session tokens are kept in `localStorage` (development preview only).
-- **No payments yet (Stage 11):** reservations expire after 15 minutes. Schedule `python -m app.cli expire-holds` in production.
+- Payments are tested with test doubles and a local Paystack stand-in, not yet against the real Paystack sandbox (no test keys yet). Schedule `python -m app.cli expire-holds` and `python -m app.cli reconcile-payments` in production.
 - Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–10 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace and bookings (holds, state machine, cancellation), with 426 passing tests. The mobile app has real accounts, the marketplace, booking and My bookings, with 36 passing tests. Payments (Stage 11) have not started.
+Stages 01–11 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation) and Paystack payments (verified checkout, idempotent webhooks, automatic and admin refunds, reconciliation), with 476 passing tests. The mobile app has real accounts, the marketplace, booking, payment and My bookings, with 40 passing tests. Delivery management (Stage 12) has not started.
 
 ## 20. Next Stage
 
-**Stage 11: Payment Integration.** Choose a South African ZAR payment provider
-(OPEN-8; candidates Paystack, PayFast, Peach Payments, Ozow); backend payment
-initiation for a `PENDING_PAYMENT` booking; payment records; signed webhook or ITN
-verification; idempotent event processing; confirming bookings through
-`confirm_booking()`; failed, pending and late (after hold expiry) payments; refunds
-where supported; reconciliation; and settlement and payout documentation. **Only
-the provider's sandbox will be used; no real money moves without your explicit
-approval.** Provider credentials (sandbox keys) will be needed from you. Waiting
-for owner approval to begin.
+**Stage 12: Delivery Management.** Delivery records for confirmed bookings, assignment,
+scheduling, the delivery status machine (`CONFIRMED` → `DELIVERY_SCHEDULED` →
+`IN_TRANSIT` → `DELIVERED` → `ACTIVE_RENTAL` → `RETURN_PENDING` → `COMPLETED`), handover
+and return records, exceptions and an audit trail. **Needs a decision on OPEN-3** (who
+delivers: owners, platform drivers, or both), which decides whether a `DRIVER` role is
+added. Waiting for owner approval to begin.

@@ -26,6 +26,17 @@ session cannot be renewed. Logging out revokes the session on the server. Restar
 `npm start` after changing `.env`. The backend's `CORS_ORIGINS` must include the web
 origin (e.g. `http://localhost:8081`) for the web build.
 
+## Payments
+
+Booking detail shows **Pay** while the hold is live. The app asks the backend to start
+checkout, opens the returned Paystack page with **expo-web-browser**, and afterwards asks
+the backend to verify (`POST /payments/{id}/refresh`). It never decides that a payment
+succeeded by itself. `src/app/payments/return.tsx` is the page checkout returns to
+(`?payment_id=`). On the web it completes the popup; opened directly, it shows the
+verified result. Set the backend's `PAYMENT_CALLBACK_URL` to
+`http://localhost:8081/payments/return` for the web preview. On a phone the in-app
+browser is closed by the renter, and the app verifies the payment then.
+
 ## Commands
 
 ```bash

@@ -178,7 +178,7 @@ function BookingForm({ vehicleId }: { vehicleId: string }) {
         className="mt-6"
       />
       <Text className="mt-2 text-center text-sm text-ink-muted">
-        The car is held for you for 15 minutes while you pay. Payment opens in a later release.
+        The car is held for you for 15 minutes while you pay on the next screen.
       </Text>
     </Screen>
   );

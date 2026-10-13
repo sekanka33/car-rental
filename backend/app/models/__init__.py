@@ -4,7 +4,7 @@ from app.models.audit_log import AuditLog
 from app.models.auth_token import RefreshToken, UserActionToken
 from app.models.booking import Booking
 from app.models.delivery import Delivery
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentEvent, Refund
 from app.models.user import CustomerProfile, OwnerProfile, Role, User, UserRole
 from app.models.vehicle import (
     Vehicle,
@@ -22,7 +22,9 @@ __all__ = [
     "Delivery",
     "OwnerProfile",
     "Payment",
+    "PaymentEvent",
     "RefreshToken",
+    "Refund",
     "Role",
     "User",
     "UserActionToken",

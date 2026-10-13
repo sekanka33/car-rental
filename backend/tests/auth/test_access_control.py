@@ -30,6 +30,8 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/vehicles/{vehicle_id}/photos/{photo_id}"),
     ("GET", "/api/v1/vehicles/{vehicle_id}/availability"),
     ("GET", "/api/v1/vehicles/{vehicle_id}/quote"),
+    # Payment provider webhook (Stage 11): no user login; authenticated by HMAC signature.
+    ("POST", "/api/v1/payments/webhooks/paystack"),
 }
 
 

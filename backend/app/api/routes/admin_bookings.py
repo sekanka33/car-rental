@@ -3,10 +3,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import AdminUser, DbSession
+from app.api.deps import AdminUser, DbSession, PaymentProviderDep
 from app.models.enums import BookingStatus
 from app.schemas.bookings import AdminBookingResponse, AdminCancelBooking, BookingRenter
-from app.services import bookings
+from app.services import bookings, payments
 
 router = APIRouter(prefix="/admin/bookings", tags=["admin: bookings"])
 
@@ -44,6 +44,13 @@ def read_booking(booking_id: uuid.UUID, _: AdminUser, session: DbSession) -> Adm
 
 @router.post("/{booking_id}/cancel", response_model=AdminBookingResponse)
 def cancel_booking(
-    booking_id: uuid.UUID, body: AdminCancelBooking, admin: AdminUser, session: DbSession
+    booking_id: uuid.UUID,
+    body: AdminCancelBooking,
+    admin: AdminUser,
+    session: DbSession,
+    provider: PaymentProviderDep,
 ) -> AdminBookingResponse:
-    return _admin_view(bookings.cancel_as_admin(session, admin, booking_id, body.reason))
+    """Cancel with a reason. A paid booking is refunded in full (default policy)."""
+    booking = bookings.cancel_as_admin(session, admin, booking_id, body.reason)
+    payments.refund_cancelled_booking(session, provider, booking, actor=admin, reason=body.reason)
+    return _admin_view(bookings.get_booking(session, booking.id))

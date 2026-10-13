@@ -71,18 +71,24 @@ PENDING_PAYMENT ─► CONFIRMED ─► DELIVERY_SCHEDULED ─► IN_TRANSIT ─
 ```
 
    Any transition not listed is rejected.
-6. Cancellation fees and refunds follow the policy from OPEN-2. **Default until OPEN-2 is decided:** the renter can cancel a `PENDING_PAYMENT` hold at any time, and a `CONFIRMED` booking up to its start time. Afterwards (or from `DELIVERY_SCHEDULED`) only an administrator can cancel, with a reason. Refund amounts are decided in Stage 11. Every cancellation records who, when and why, and is audited.
+6. Cancellation fees and refunds follow the policy from OPEN-2. **Default until OPEN-2 is decided:** the renter can cancel a `PENDING_PAYMENT` hold at any time, and a `CONFIRMED` booking up to its start time. Afterwards (or from `DELIVERY_SCHEDULED`) only an administrator can cancel, with a reason. **Stage 11 default refund:** a cancelled paid booking is refunded in full, automatically. Every cancellation records who, when and why, and is audited.
 7. Expired holds are released three ways: just before availability is checked for that vehicle, whenever bookings are listed or opened, and by the `python -m app.cli expire-holds` command (run it from cron, e.g. every minute). Marketplace availability ignores holds past their deadline even before they are marked `EXPIRED`.
 8. Implemented in `app/services/bookings.py` (Stage 10). `confirm_booking()` (`PENDING_PAYMENT` → `CONFIRMED`) is reserved for verified payments (Stage 11) and refuses holds that have expired.
 
 ## BR-6 Payments
 1. Only the backend creates payments, for the amount on the booking's price snapshot.
-2. A payment becomes `SUCCEEDED` only after the backend verifies the provider's signed notification **and** confirms the amount and currency match the booking.
-3. Every provider event is stored with a unique provider event ID. Duplicate events are acknowledged but not processed twice.
+2. A payment becomes `SUCCEEDED` only after the backend itself verifies the charge with the provider's API **and** confirms the reference, amount and currency match the booking. A signed notification only triggers that check; its contents are never trusted. A mismatch is marked `FAILED`, audited and left for an administrator.
+3. Every provider notification is signature-checked (Paystack: HMAC-SHA512 of the raw body) and stored once under a unique key (SHA-256 of the signed body, because Paystack sends no event ID). Duplicate events are acknowledged but not processed twice.
 4. Payment success moves the booking from `PENDING_PAYMENT` to `CONFIRMED` in the same database transaction.
-5. If payment succeeds after a hold has expired and the dates are no longer free, the payment is refunded automatically or flagged for an administrator. It is never applied silently.
+5. If payment succeeds after a hold has expired, after the booking was cancelled, or for a booking that is already paid, the payment becomes `REFUND_PENDING` and is refunded automatically in full. It is never applied silently. (Stage 11 chose automatic refunds rather than re-confirming a late payment even when the dates are still free, because the renter was told the hold had ended.)
 6. Refunds are recorded as separate refund records linked to the payment and audited.
-7. No real-money transaction is run in development or tests. Only provider sandbox credentials are used.
+7. No real-money transaction is run in development or tests. Only provider sandbox credentials are used. The backend refuses to start with a live key unless `ALLOW_LIVE_PAYMENTS=true`.
+8. One checkout per booking at a time: starting payment again returns the open checkout. A new one is created only after the previous attempt failed.
+9. The amount charged is the booking total (rental plus delivery fee). The security deposit is **not** charged online until OPEN-7 is decided.
+10. Refunds can be full or partial (administrator, with a reason), never more than what remains unrefunded. A refund's status follows the provider (`PENDING` → `PROCESSED` or `FAILED`); a failed refund leaves the payment for an administrator to retry.
+11. Pending payments and refunds are re-checked with the provider by `python -m app.cli reconcile-payments` (cron) so a lost webhook cannot leave a paid booking unconfirmed.
+12. **Payouts (OPEN-1 default):** the platform collects as merchant of record into its Paystack balance. Owner payouts and commission are settled outside the system for now; each `SUCCEEDED` payment, its refunds and the booking's vehicle owner give the data needed for a payout report. Paystack subaccounts (split payments) can automate this once the commission model is agreed.
+13. Implemented in `app/services/payments.py` and `app/integrations/payments.py` (Stage 11).
 
 ## BR-7 Deliveries and tracking
 1. A delivery exists only for a `CONFIRMED` (or later) booking.

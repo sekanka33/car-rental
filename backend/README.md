@@ -216,10 +216,10 @@ first name plus the vehicle's area. Availability never reveals reasons or renter
 | `POST /api/v1/bookings` | `RENTER` | Reserve: `vehicle_id`, `start_at`, `end_at` (with timezone), `delivery_address`. The backend checks eligibility (403 `renter_not_eligible` with `details[].reason`), the listing (404), availability (409 `vehicle_unavailable`) and limits, then stores the official price breakdown. The new booking is `PENDING_PAYMENT` with `hold_expires_at` |
 | `GET /api/v1/bookings[?status=]` | `RENTER` | Own booking history, newest first |
 | `GET /api/v1/bookings/{id}` | `RENTER` (own only, else 404) | Booking with its agreed price |
-| `POST /api/v1/bookings/{id}/cancel` | `RENTER` | Cancel an unpaid hold, or a confirmed booking before it starts |
+| `POST /api/v1/bookings/{id}/cancel` | `RENTER` | Cancel an unpaid hold, or a confirmed booking before it starts (a paid booking is refunded in full) |
 | `GET /api/v1/admin/bookings[?status=&vehicle_id=]` | `ADMIN` | All bookings with renter and owner |
 | `GET /api/v1/admin/bookings/{id}` | `ADMIN` | Detail |
-| `POST /api/v1/admin/bookings/{id}/cancel` | `ADMIN` | Cancel with a required reason (audited) |
+| `POST /api/v1/admin/bookings/{id}/cancel` | `ADMIN` | Cancel with a required reason (audited; a paid booking is refunded in full) |
 
 Status transitions are enforced in one place (`ALLOWED_TRANSITIONS` in
 `app/services/bookings.py`; see BR-5.5). Overlaps are rejected by the database exclusion
@@ -229,6 +229,29 @@ serialise cleanly instead of deadlocking.
 Run `python -m app.cli expire-holds` from cron (e.g. every minute) to mark unpaid holds
 past their deadline `EXPIRED`. They are also expired lazily on reads and before
 availability checks.
+
+### Payments (Paystack)
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `POST /api/v1/bookings/{id}/payments` | `RENTER` (own booking) | Start or resume checkout for a `PENDING_PAYMENT` booking; returns `checkout_url`. Amount is the stored booking total. 409 `payment_not_allowed`, 503 `payments_unavailable`, 502 `payment_provider_error` |
+| `GET /api/v1/bookings/{id}/payments` | `RENTER` (own booking) | Payments and their refunds |
+| `POST /api/v1/payments/{id}/refresh` | `RENTER` (own payment) | Verify with Paystack now (after returning from checkout) |
+| `POST /api/v1/payments/webhooks/paystack` | Public, **HMAC-SHA512 signature** | Paystack notifications; stored once, then verified through the API (401 `invalid_signature`) |
+| `GET /api/v1/admin/payments[?status=&booking_id=]` | `ADMIN` | All payments with refunds and booking status |
+| `POST /api/v1/admin/payments/{id}/refunds` | `ADMIN` | Full (omit `amount`) or partial refund with a `reason`; audited |
+| `POST /api/v1/admin/payments/reconcile` | `ADMIN` | Re-check pending payments and refunds now |
+
+Statuses: payment `PENDING` → `SUCCEEDED` / `FAILED`; money that cannot be applied (late,
+cancelled or duplicate) → `REFUND_PENDING` → `REFUNDED`; partial refunds →
+`PARTIALLY_REFUNDED`. Refund `PENDING` → `PROCESSED` / `FAILED`. Rules: BR-6 in
+[docs/business-rules.md](../docs/business-rules.md).
+
+To try it against the Paystack sandbox: set `PAYSTACK_SECRET_KEY=sk_test_…` and
+`PAYMENT_CALLBACK_URL`, then point the dashboard's test webhook URL at
+`https://<public host>/api/v1/payments/webhooks/paystack` (e.g. through a tunnel). Run
+`python -m app.cli reconcile-payments` from cron (e.g. every 5 minutes) so a lost webhook
+cannot leave a paid booking unconfirmed.
 
 ### Development demo data
 
@@ -303,6 +326,11 @@ See [.env.example](.env.example).
 | `BOOKING_MIN_LEAD_MINUTES` | `120` | Earliest start, relative to now |
 | `BOOKING_MAX_DAYS` | `30` | Longest rental (1–90) |
 | `MAX_PENDING_BOOKINGS_PER_RENTER` | `2` | Unpaid holds a renter may have at once |
+| `PAYSTACK_SECRET_KEY` | *(none)* | Empty disables online payment (503). Must start with `sk_test_` (or `sk_live_` with the next setting) |
+| `ALLOW_LIVE_PAYMENTS` | `false` | Must be `true` for a live key; set only after real transactions are explicitly approved |
+| `PAYSTACK_BASE_URL` | `https://api.paystack.co` | Paystack API base URL |
+| `PAYMENT_CALLBACK_URL` | *(none)* | Where checkout returns the customer (`?payment_id=` is appended); web preview: `http://localhost:8081/payments/return` |
+| `PAYSTACK_PUBLIC_KEY` | *(none)* | Not used by the backend |
 
 ## Structure
 
@@ -315,19 +343,19 @@ app/
 │   ├── security.py    # Argon2id hashing, JWT access tokens, random token helpers
 │   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
 │   └── logging.py
-├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds)
+├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds, reconcile-payments)
 ├── demo_data.py       # DEVELOPMENT-ONLY demo marketplace data
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, bookings, admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, bookings, payments, admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
-├── integrations/      # External services behind interfaces (email, private document storage)
+├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

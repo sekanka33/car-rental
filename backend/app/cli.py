@@ -86,6 +86,21 @@ def expire_holds_command(session: Session) -> int:
     return 0
 
 
+def reconcile_payments_command(session: Session, settings) -> int:
+    from app.integrations.payments import build_payment_provider
+    from app.services.payments import reconcile_pending
+
+    provider = build_payment_provider(settings)
+    if provider is None:
+        print("Error: payments are not configured (PAYSTACK_SECRET_KEY).", file=sys.stderr)
+        return 1
+    counts = reconcile_pending(session, provider)
+    print(
+        f"Checked {counts['payments_checked']} payment(s), {counts['refunds_checked']} refund(s)."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -98,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "expire-holds",
         help="Mark unpaid booking holds past their deadline as EXPIRED (run from cron)",
+    )
+    commands.add_parser(
+        "reconcile-payments",
+        help="Re-check pending payments and refunds with the payment provider (run from cron)",
     )
     commands.add_parser(
         "seed-demo-data",
@@ -116,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
                 return seed_demo_command(session, settings)
             if args.command == "expire-holds":
                 return expire_holds_command(session)
+            if args.command == "reconcile-payments":
+                return reconcile_payments_command(session, settings)
             return create_admin_command(
                 session,
                 email=args.email,

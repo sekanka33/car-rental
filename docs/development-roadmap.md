@@ -17,7 +17,7 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 | 08 | Administrator Pricing Management | [x] COMPLETE | 07 |
 | 09 | Customer Marketplace | [x] COMPLETE | 02, 08 |
 | 10 | Booking and Availability | [x] COMPLETE | 06, 08, 09 |
-| 11 | Payment Integration | NOT STARTED | 10 |
+| 11 | Payment Integration | [x] COMPLETE | 10 |
 | 12 | Delivery Management | NOT STARTED | 11 |
 | 13 | Google Maps and Live Tracking | NOT STARTED | 12 |
 | 14 | Customer and Owner Dashboards | NOT STARTED | 13 |

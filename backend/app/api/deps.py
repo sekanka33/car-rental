@@ -12,6 +12,7 @@ from app.core.errors import AuthenticationError, PermissionDeniedError
 from app.core.security import InvalidTokenError, decode_access_token
 from app.db.session import get_db
 from app.integrations.email import EmailSender
+from app.integrations.payments import PaymentProvider
 from app.integrations.storage import DocumentStorage
 from app.models import User
 from app.models.enums import RoleName
@@ -36,6 +37,13 @@ def get_document_storage(request: Request) -> DocumentStorage:
 
 
 DocumentStorageDep = Annotated[DocumentStorage, Depends(get_document_storage)]
+
+
+def get_payment_provider(request: Request) -> PaymentProvider | None:
+    return request.app.state.payment_provider
+
+
+PaymentProviderDep = Annotated[PaymentProvider | None, Depends(get_payment_provider)]
 
 
 def get_current_user(

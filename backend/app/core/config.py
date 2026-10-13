@@ -68,12 +68,27 @@ class Settings(BaseSettings):
     booking_max_days: int = Field(default=30, ge=1, le=90)
     max_pending_bookings_per_renter: int = Field(default=2, ge=1, le=10)
 
+    # Payments (Paystack). Without a secret key, payments are disabled (503).
+    # Only test keys (sk_test_...) are accepted unless ALLOW_LIVE_PAYMENTS is true:
+    # no real money moves without an explicit decision.
+    paystack_secret_key: SecretStr | None = None
+    paystack_public_key: str | None = None  # not used by the backend; kept for completeness
+    paystack_base_url: str = "https://api.paystack.co"
+    allow_live_payments: bool = False
+    # Where Paystack sends the customer after checkout (must be http(s)).
+    payment_callback_url: str | None = None
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("paystack_secret_key", mode="before")
+    @classmethod
+    def empty_key_means_disabled(cls, value: object) -> object:
+        return None if value in ("", None) else value
 
     @field_validator("database_url")
     @classmethod
@@ -96,6 +111,15 @@ class Settings(BaseSettings):
             raise ValueError("EMAIL_BACKEND=console is not allowed in production; use smtp")
         if self.email_backend == "smtp" and not self.smtp_host:
             raise ValueError("SMTP_HOST is required when EMAIL_BACKEND=smtp")
+        if self.paystack_secret_key is not None:
+            key = self.paystack_secret_key.get_secret_value()
+            if key.startswith("sk_live_") and not self.allow_live_payments:
+                raise ValueError(
+                    "A live Paystack key is configured but ALLOW_LIVE_PAYMENTS is not true. "
+                    "Use a test key (sk_test_...) until live payments are explicitly approved."
+                )
+            if not key.startswith(("sk_test_", "sk_live_")):
+                raise ValueError("PAYSTACK_SECRET_KEY must start with sk_test_ or sk_live_")
         return self
 
     @property

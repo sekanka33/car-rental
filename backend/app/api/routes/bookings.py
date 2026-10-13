@@ -3,10 +3,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import AppSettings, DbSession, RenterUser
+from app.api.deps import AppSettings, DbSession, PaymentProviderDep, RenterUser
 from app.models.enums import BookingStatus
 from app.schemas.bookings import BookingCreate, BookingResponse, CancelBooking
-from app.services import bookings
+from app.services import bookings, payments
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -51,9 +51,16 @@ def read_my_booking(booking_id: uuid.UUID, user: RenterUser, session: DbSession)
 
 @router.post("/{booking_id}/cancel", response_model=BookingResponse)
 def cancel_my_booking(
-    booking_id: uuid.UUID, body: CancelBooking, user: RenterUser, session: DbSession
+    booking_id: uuid.UUID,
+    body: CancelBooking,
+    user: RenterUser,
+    session: DbSession,
+    provider: PaymentProviderDep,
 ) -> BookingResponse:
-    """Cancel an unpaid hold, or a confirmed booking before it starts."""
-    return BookingResponse.from_model(
-        bookings.cancel_as_renter(session, user, booking_id, body.reason)
+    """Cancel an unpaid hold, or a confirmed booking before it starts. A paid booking is
+    refunded in full (default policy until OPEN-2 is decided)."""
+    booking = bookings.cancel_as_renter(session, user, booking_id, body.reason)
+    payments.refund_cancelled_booking(
+        session, provider, booking, actor=user, reason=booking.cancellation_reason or "Cancelled"
     )
+    return BookingResponse.from_model(bookings.get_booking(session, booking.id))

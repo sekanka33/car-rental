@@ -1,5 +1,4 @@
 -r requirements.txt
 # Development and test tools
-httpx2==2.13.1  # used by starlette.testclient
 pytest==9.1.1
 ruff==0.17.0

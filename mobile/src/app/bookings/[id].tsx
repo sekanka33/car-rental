@@ -1,4 +1,6 @@
+import * as Linking from 'expo-linking';
 import { Stack, useLocalSearchParams } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 
@@ -15,7 +17,9 @@ import { ApiError } from '@/lib/api';
 import { formatDateTime } from '@/lib/dates';
 import { formatZar } from '@/lib/format';
 import { cancelBooking, getBooking } from '@/services/bookings';
+import { listBookingPayments, refreshPayment, startPayment } from '@/services/payments';
 import type { Booking } from '@/types/booking';
+import type { Payment } from '@/types/payment';
 
 /** The current time, refreshed every 15 seconds (drives the hold countdown). */
 function useNow(): number {
@@ -36,7 +40,61 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: () => void }) {
+const PAYMENT_LABELS: Record<Payment['status'], string> = {
+  PENDING: 'Not completed yet',
+  SUCCEEDED: 'Paid',
+  FAILED: 'Not completed',
+  CANCELLED: 'Cancelled',
+  REFUND_PENDING: 'Being refunded',
+  REFUNDED: 'Refunded',
+  PARTIALLY_REFUNDED: 'Partly refunded',
+};
+
+function PaymentHistory({ payments }: { payments: Payment[] }) {
+  // Abandoned checkouts are noise for the renter; show money that moved (or was attempted).
+  const shown = payments.filter((p) => p.status !== 'PENDING');
+  if (shown.length === 0) return null;
+  return (
+    <>
+      <Text className="mb-1 mt-6 text-lg font-semibold text-ink">Payments</Text>
+      {shown.map((payment) => (
+        <View key={payment.id}>
+          <Row
+            label={`${PAYMENT_LABELS[payment.status]} · ${payment.reference}`}
+            value={formatZar(payment.amount)}
+          />
+          {payment.paid_at ? <Row label="Paid on" value={formatDateTime(payment.paid_at)} /> : null}
+          {payment.refunds.map((refund) => (
+            <Row
+              key={refund.id}
+              label={refund.status === 'PROCESSED' ? 'Refunded' : refund.status === 'FAILED' ? 'Refund failed (we are on it)' : 'Refund in progress'}
+              value={`− ${formatZar(refund.amount)}`}
+            />
+          ))}
+        </View>
+      ))}
+    </>
+  );
+}
+
+/** Opens checkout, then asks the backend to verify the payment. Never trusts the browser result. */
+async function payForBooking(bookingId: string): Promise<Payment> {
+  const payment = await startPayment(bookingId);
+  if (payment.checkout_url) {
+    await WebBrowser.openAuthSessionAsync(payment.checkout_url, Linking.createURL('payments/return'));
+  }
+  return refreshPayment(payment.id);
+}
+
+function BookingDetails({
+  booking,
+  payments,
+  onChanged,
+}: {
+  booking: Booking;
+  payments: Payment[];
+  onChanged: () => void;
+}) {
   const now = useNow();
   const minutesLeft =
     booking.status === 'PENDING_PAYMENT' && booking.hold_expires_at
@@ -44,7 +102,9 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
       : null;
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const cancellable =
     booking.status === 'PENDING_PAYMENT' ||
     (booking.status === 'CONFIRMED' && new Date(booking.start_at).getTime() > now);
@@ -66,6 +126,27 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
     }
   };
 
+  const pay = async () => {
+    setPaying(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const payment = await payForBooking(booking.id);
+      // Reloading remounts this screen, so only reload when the booking actually changed.
+      if (payment.status === 'FAILED') {
+        setError(payment.failure_reason ?? 'The payment was not completed. You were not charged.');
+      } else if (payment.status === 'PENDING') {
+        setInfo('We have not had confirmation from the payment provider yet. If you paid, this booking updates shortly.');
+      } else {
+        onChanged();
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not start the payment.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
   return (
     <Screen scroll>
       <Stack.Screen options={{ title: `Booking ${booking.reference}` }} />
@@ -82,7 +163,7 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
         <View className="mt-4">
           <Notice
             tone="info"
-            message={`The car is held for you for ${minutesLeft} more ${minutesLeft === 1 ? 'minute' : 'minutes'}. Payment opens in a later release; unpaid holds expire automatically.`}
+            message={`The car is held for you for ${minutesLeft} more ${minutesLeft === 1 ? 'minute' : 'minutes'}. Pay now to confirm it; unpaid holds expire automatically.`}
           />
         </View>
       ) : null}
@@ -105,11 +186,29 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
       <Row label="Delivery fee" value={formatZar(booking.price.delivery_fee)} />
       <Row label="Total" value={formatZar(booking.price.total_amount)} />
       <Row label="Refundable deposit" value={formatZar(booking.price.deposit_amount)} />
+      {Number(booking.price.deposit_amount) > 0 ? (
+        <Text className="mt-1 text-sm text-ink-muted">The deposit is not charged online; it is arranged at handover.</Text>
+      ) : null}
+
+      <PaymentHistory payments={payments} />
 
       {error ? (
         <View className="mt-4">
           <Notice tone="danger" message={error} />
         </View>
+      ) : null}
+      {info ? (
+        <View className="mt-4">
+          <Notice tone="info" message={info} />
+        </View>
+      ) : null}
+      {booking.status === 'PENDING_PAYMENT' && minutesLeft ? (
+        <Button
+          label={`Pay ${formatZar(booking.price.total_amount)}`}
+          loading={paying}
+          onPress={pay}
+          className="mt-8"
+        />
       ) : null}
       {cancellable ? (
         <Button
@@ -117,8 +216,11 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
           variant="secondary"
           loading={cancelling}
           onPress={cancel}
-          className="mt-8"
+          className="mt-4"
         />
+      ) : null}
+      {cancellable && booking.status === 'CONFIRMED' ? (
+        <Text className="mt-2 text-center text-sm text-ink-muted">Cancelling before the trip starts refunds you in full.</Text>
       ) : null}
     </Screen>
   );
@@ -127,7 +229,10 @@ function BookingDetails({ booking, onChanged }: { booking: Booking; onChanged: (
 export default function BookingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { state } = useAuth();
-  const load = useCallback(() => getBooking(id), [id]);
+  const load = useCallback(
+    () => Promise.all([getBooking(id), listBookingPayments(id)]).then(([b, p]) => ({ booking: b, payments: p })),
+    [id],
+  );
   const booking = useAsync(load);
 
   if (state.status === 'signedOut') return <SignInPrompt message="Log in to see this booking." />;
@@ -138,5 +243,5 @@ export default function BookingScreen() {
     }
     return <ErrorState message={booking.error.message} onAction={booking.reload} />;
   }
-  return <BookingDetails booking={booking.data} onChanged={booking.reload} />;
+  return <BookingDetails booking={booking.data.booking} payments={booking.data.payments} onChanged={booking.reload} />;
 }

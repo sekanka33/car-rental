@@ -13,6 +13,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import build_engine, build_session_factory
 from app.integrations.email import EmailSender, build_email_sender
+from app.integrations.payments import PaymentProvider, build_payment_provider
 from app.integrations.storage import DocumentStorage, LocalDocumentStorage
 from app.schemas.common import ErrorResponse
 
@@ -23,6 +24,7 @@ def create_app(
     settings: Settings | None = None,
     email_sender: EmailSender | None = None,
     document_storage: DocumentStorage | None = None,
+    payment_provider: PaymentProvider | None | object = ...,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -61,6 +63,10 @@ def create_app(
     app.state.email_sender = email_sender or build_email_sender(settings)
     app.state.document_storage = document_storage or LocalDocumentStorage(
         settings.document_storage_dir
+    )
+    # `...` means "use the configured provider"; tests pass a fake or None explicitly.
+    app.state.payment_provider = (
+        build_payment_provider(settings) if payment_provider is ... else payment_provider
     )
 
     if settings.cors_origins:

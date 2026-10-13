@@ -92,12 +92,12 @@ deliveries. All amounts are in South African rand (ZAR).
 
 | ID | Question | Needed by |
 |----|----------|-----------|
-| OPEN-1 | Commission model and owner payout schedule. Is the platform a merchant of record or a split-payment marketplace? | Stage 11 |
-| OPEN-2 | Cancellation and refund policy (time windows, fees). *Stage 10 default: free cancellation of unpaid holds; confirmed bookings cancellable by the renter until the start; refunds decided in Stage 11.* | Stage 10 |
+| OPEN-1 | Commission model and owner payout schedule. Is the platform a merchant of record or a split-payment marketplace? *Stage 11 default: merchant of record; payouts settled outside the system (BR-6.12).* | Stage 11 |
+| OPEN-2 | Cancellation and refund policy (time windows, fees). *Stage 10 default: free cancellation of unpaid holds; confirmed bookings cancellable by the renter until the start; Stage 11 default: a cancelled paid booking is refunded in full.* | Stage 10 |
 | OPEN-3 | Who delivers vehicles: owners, platform drivers, or both? Decides whether the `DRIVER` role is needed. | Stage 12 |
 | OPEN-4 | Insurance arrangement and any insurer-imposed minimum age or licence-duration rules (many SA insurers require 21+ or 23+, or several years of licence history). *Stage 06 default: 18, configurable through `MIN_RENTER_AGE`; licence-duration rules not implemented.* | Stage 06 |
 | OPEN-5 | Are foreign nationals (passport plus international driving permit) supported? *Stage 06 default: SA ID only.* | Stage 06 |
 | OPEN-6 | Is the business VAT-registered? If so, prices are shown VAT-inclusive at 15%. *Stage 08 default: official prices are final, VAT-inclusive amounts with no VAT breakdown.* | Stage 08 |
-| OPEN-7 | Security deposit amount and holding mechanism. | Stage 11 |
-| OPEN-8 | Choice of payment provider after the merchant account review (see architecture.md). | Stage 11 |
+| OPEN-7 | Security deposit amount and holding mechanism. *Stage 11 default: the deposit is shown but not charged online; it is arranged at handover.* | Stage 11 |
+| OPEN-8 | Choice of payment provider after the merchant account review (see architecture.md). *Stage 11 default: Paystack, test mode only; the merchant agreement and fees still need confirming.* | Stage 11 |
 | OPEN-9 | Manual document review only, or an external KYC/ID verification service? *Stage 06 default: manual administrator review.* | Stage 06 |

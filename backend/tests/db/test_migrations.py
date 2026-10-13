@@ -27,6 +27,8 @@ EXPECTED_TABLES = {
     "verification_files",
     "vehicle_documents",
     "vehicle_availability_blocks",
+    "payment_events",
+    "refunds",
 }
 
 pytestmark = requires_db
