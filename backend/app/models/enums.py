@@ -9,6 +9,11 @@ class RoleName(StrEnum):
     RENTER = "RENTER"
 
 
+class UserActionTokenPurpose(StrEnum):
+    EMAIL_VERIFICATION = "EMAIL_VERIFICATION"
+    PASSWORD_RESET = "PASSWORD_RESET"  # noqa: S105 - enum label, not a secret
+
+
 class UserStatus(StrEnum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"

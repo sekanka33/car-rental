@@ -4,10 +4,12 @@ These rules are enforced by the **backend**. The mobile app and admin dashboard
 may mirror them for user experience, but they are never the source of truth.
 
 ## BR-1 Identity and roles
-1. Role assignments live only in the database. Roles in a client request or in unsigned client data are ignored.
+1. Role assignments live only in the database. Roles in a client request are rejected (request bodies forbid unknown fields), and access tokens do not carry roles. Each request reads roles and account status from the database.
 2. Nobody can self-register as `ADMIN`. Administrators are created through a controlled CLI command run by an operator.
-3. Suspended accounts cannot authenticate, book, list vehicles, or update deliveries.
+3. Suspended accounts cannot authenticate, book, list vehicles, or update deliveries. Suspension takes effect immediately: existing access tokens stop working and all refresh tokens are revoked.
 4. A user cannot approve, verify, or price anything they own or submitted.
+5. Passwords are 8–128 characters, differ from the email address, and are stored only as Argon2id hashes. Password reset signs the user out everywhere.
+6. Responses to login failures and password-reset requests do not reveal whether an email address is registered. (Registration does say "already registered", to keep sign-up usable; rate limiting follows in Stage 17.)
 
 ## BR-2 Renter eligibility
 A renter may create a booking only if **all** of these are true at booking time:

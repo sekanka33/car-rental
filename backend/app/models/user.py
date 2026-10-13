@@ -38,6 +38,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     suspended_at: Mapped[datetime | None]
     suspension_reason: Mapped[str | None] = mapped_column(String(500))
     last_login_at: Mapped[datetime | None]
+    # Incremented to invalidate every access token issued so far
+    # (password reset, "log out everywhere", suspension).
+    token_version: Mapped[int] = mapped_column(default=0, server_default="0")
 
     roles: Mapped[list[Role]] = relationship(
         secondary="user_roles",

@@ -11,7 +11,7 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 | 02 | Mobile Application Foundation | [x] COMPLETE | 01 |
 | 03 | Python Backend Foundation | [x] COMPLETE | 01 |
 | 04 | PostgreSQL and Database Foundation | [x] COMPLETE | 03 |
-| 05 | Authentication and Authorisation | NOT STARTED | 04 |
+| 05 | Authentication and Authorisation | [x] COMPLETE | 04 |
 | 06 | Customer Eligibility and Document Verification | NOT STARTED | 05 |
 | 07 | Owner Profiles and Vehicle Registration | NOT STARTED | 05 |
 | 08 | Administrator Pricing Management | NOT STARTED | 07 |

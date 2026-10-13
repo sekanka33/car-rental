@@ -2,10 +2,10 @@
 
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Request
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 API_VERSION = "0.1.0"
@@ -31,6 +31,27 @@ class Settings(BaseSettings):
     database_url: SecretStr
     database_echo: bool = False
 
+    # Authentication. JWT_SECRET_KEY is required: generate with
+    # python -c "import secrets; print(secrets.token_urlsafe(64))"
+    jwt_secret_key: SecretStr = Field(min_length=32)
+    jwt_issuer: str = "car-rental-api"
+    jwt_audience: str = "car-rental-clients"
+    access_token_ttl_minutes: int = Field(default=15, ge=1, le=60)
+    refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
+    email_verification_ttl_hours: int = Field(default=48, ge=1, le=168)
+    password_reset_ttl_minutes: int = Field(default=30, ge=5, le=120)
+
+    # Email delivery. "smtp" works with any provider offering SMTP + STARTTLS.
+    # "console" only logs messages and is refused in production.
+    email_backend: Literal["console", "smtp"] = "console"
+    email_from: str = "CarHire SA <no-reply@example.com>"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    # Links in emails start with this URL (the mobile app's deep-link scheme).
+    app_link_base_url: str = "carrental://"
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_cors_origins(cls, value: object) -> object:
@@ -52,6 +73,14 @@ class Settings(BaseSettings):
         if level not in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}:
             raise ValueError(f"Invalid LOG_LEVEL: {value}")
         return level
+
+    @model_validator(mode="after")
+    def production_requirements(self) -> "Settings":
+        if self.app_env == Environment.PRODUCTION and self.email_backend == "console":
+            raise ValueError("EMAIL_BACKEND=console is not allowed in production; use smtp")
+        if self.email_backend == "smtp" and not self.smtp_host:
+            raise ValueError("SMTP_HOST is required when EMAIL_BACKEND=smtp")
+        return self
 
     @property
     def docs_enabled(self) -> bool:

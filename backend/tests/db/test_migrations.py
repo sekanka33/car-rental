@@ -8,7 +8,7 @@ from sqlalchemy import Engine, inspect, text
 from app.db.base import Base
 from tests.conftest import alembic_config, requires_db
 
-CORE_TABLES = {
+EXPECTED_TABLES = {
     "users",
     "roles",
     "user_roles",
@@ -21,6 +21,8 @@ CORE_TABLES = {
     "payments",
     "deliveries",
     "audit_logs",
+    "refresh_tokens",
+    "user_action_tokens",
 }
 
 pytestmark = requires_db
@@ -30,8 +32,8 @@ def _tables(engine: Engine) -> set[str]:
     return set(inspect(engine).get_table_names()) - {"alembic_version"}
 
 
-def test_upgrade_creates_all_core_tables(migrated_engine: Engine) -> None:
-    assert _tables(migrated_engine) == CORE_TABLES
+def test_upgrade_creates_all_tables(migrated_engine: Engine) -> None:
+    assert _tables(migrated_engine) == EXPECTED_TABLES
 
 
 def test_models_match_migrations(migrated_engine: Engine) -> None:
@@ -56,7 +58,7 @@ def test_downgrade_to_base_and_upgrade_again(migrated_engine: Engine) -> None:
     assert leftover == 0
 
     command.upgrade(config, "head")
-    assert _tables(migrated_engine) == CORE_TABLES
+    assert _tables(migrated_engine) == EXPECTED_TABLES
 
 
 def test_roles_are_seeded(migrated_engine: Engine) -> None:

@@ -4,9 +4,11 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–04 complete. The mobile app foundation runs with
-> **prototype sample data**. The FastAPI backend runs on PostgreSQL with the core
-> schema and migrations, but has no authentication or business endpoints yet. Commands for
+> **Current state:** Stages 01–05 complete. The mobile app foundation runs with
+> **prototype sample data** (not yet connected to the API). The FastAPI backend runs
+> on PostgreSQL with authentication, role-based access control, email verification,
+> password reset, and account suspension. Vehicle, booking, and payment features are
+> not built yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -35,7 +37,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 | Area | Technology |
 |------|------------|
 | Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, ESLint 9 (`eslint-config-expo`). Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
-| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
+| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
 | Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
 | Payments | South African ZAR provider. Candidates: Paystack, PayFast, Peach Payments, Ozow. Decided in Stage 11. |
@@ -76,7 +78,7 @@ car-rental/
 │   ├── src/data/           # PROTOTYPE sample data (removed in Stage 09)
 │   └── tailwind.config.js  # Theme tokens
 ├── backend/                # FastAPI service (Stage 03) — see backend/README.md
-│   ├── app/                # main.py, core/, api/routes/, db/, models/, schemas/
+│   ├── app/                # main.py, cli.py, core/, api/, db/, models/, repositories/, services/, integrations/, schemas/
 │   ├── migrations/         # Alembic migrations
 │   ├── tests/              # Pytest suite (tests/db/ uses real PostgreSQL)
 │   └── .env.example        # Placeholder settings (copy to .env)
@@ -100,7 +102,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 02 | Mobile Application Foundation | [x] COMPLETE | tsc, ESLint, expo-doctor, 3-platform bundle, web smoke test (16/16) |
 | 03 | Python Backend Foundation | [x] COMPLETE | pytest 19/19, ruff, live server checks, clean-venv install |
 | 04 | PostgreSQL and Database Foundation | [x] COMPLETE | pytest 62/62 on PostgreSQL 16, migration round-trip, alembic check, concurrency test |
-| 05 | Authentication and Authorisation | NOT STARTED | Not tested |
+| 05 | Authentication and Authorisation | [x] COMPLETE | pytest 129/129, 6 mutation checks, live E2E flow, fresh-venv install |
 | 06 | Customer Eligibility and Document Verification | NOT STARTED | Not tested |
 | 07 | Owner Profiles and Vehicle Registration | NOT STARTED | Not tested |
 | 08 | Administrator Pricing Management | NOT STARTED | Not tested |
@@ -273,6 +275,86 @@ Outstanding limitations:
 Next stage:
 - Stage 05: Authentication and Authorisation.
 
+### Stage 05: Authentication and Authorisation
+
+Status: COMPLETE (2026-10-13)
+
+Implemented:
+- Renter and owner registration (`account_type` limited to RENTER or OWNER). Creates the user, role, and matching profile, then sends a verification email. Email is normalised to lower case, and SA mobile numbers to `+27…`.
+- Login, refresh, logout (one session), and logout-all.
+- Password hashing with Argon2id. Hashes are upgraded on login when the parameters change.
+- 15-minute HS256 access tokens carrying only the user id and `token_version`. Issuer, audience, expiry, and algorithm are enforced.
+- 30-day refresh tokens stored as SHA-256 hashes. They rotate on every use, and re-use of a rotated token revokes that session family.
+- Role-based access control: `get_current_user` reloads the user and checks status on every request; `require_roles(...)`; `AdminUser` and `OwnerUser` dependencies. Roles never come from the token or the client, and request bodies reject unknown fields.
+- Email verification (single-use 48-hour links; resend invalidates older links) and password reset (30-minute single-use links). Reset responses are identical for unknown emails, and a reset signs the user out everywhere and is audited.
+- Account suspension and reactivation by administrators: immediate effect, audited, cannot suspend yourself. Plus an admin user list.
+- Controlled administrator creation: `python -m app.cli create-admin` (interactive hidden password or `--password-stdin`), audited. There is no HTTP route to create admins.
+- Email adapter: `SmtpEmailSender` (STARTTLS, any SMTP provider) for staging and production; `ConsoleEmailSender` for development (refused in production); in-memory sender for tests.
+- Migration `0ab336768893`: `refresh_tokens`, `user_action_tokens`, `users.token_version`.
+- Migration tooling fix: a `render_item` hook in `migrations/env.py` plus a modernised `script.py.mako`, so autogenerated migrations no longer duplicate enum CHECK constraints and pass Ruff as generated.
+
+Files changed:
+- New:
+  - `backend/app/core/security.py`, `backend/app/api/deps.py`, `backend/app/cli.py`
+  - Routes: `backend/app/api/routes/{auth,users,owners,admin_users}.py`
+  - Services, repositories, schemas, models: `backend/app/services/{auth,accounts,audit}.py`, `backend/app/repositories/users.py`, `backend/app/schemas/auth.py`, `backend/app/models/auth_token.py`
+  - `backend/app/integrations/email.py`
+  - Migration: `backend/migrations/versions/2026_10_13_1144-0ab336768893_add_authentication_tokens.py`
+  - Tests: `backend/tests/auth/` (conftest plus 7 test modules), `backend/tests/test_email.py`
+- Modified:
+  - Backend: `app/core/config.py`, `app/core/errors.py`, `app/main.py`, `app/api/router.py`, `app/models/{__init__,enums,user}.py`
+  - Migrations: `migrations/env.py`, `migrations/script.py.mako`
+  - Config: `requirements.txt`, `pyproject.toml`, `.env.example`
+  - Tests: `tests/conftest.py`, `tests/test_config.py`, `tests/test_docs.py`, `tests/db/test_migrations.py`
+  - Docs: `backend/README.md`, `docs/business-rules.md`, `docs/development-roadmap.md`, `README.md`
+- Local only (git-ignored): `backend/.env` now holds a generated 86-character `JWT_SECRET_KEY`.
+
+Verification:
+- `pytest -ra`: **129 passed, 0 skipped, 0 failed** (67 of them new). Covered:
+  - Registration rules, including attempts to choose ADMIN, roles, or status (all rejected).
+  - Hashing; JWT forgery and expiry (`alg=none`, foreign secret, wrong issuer or audience, HS512, tampering, wrong type).
+  - Refresh rotation, reuse detection, and expiry.
+  - Logout and logout-all.
+  - Email verification and password reset (single use, expiry, latest-link-only, purpose separation, no enumeration).
+  - An endpoint sweep built from the OpenAPI schema, asserting that **every non-public endpoint returns 401 without a token**.
+  - Renter→owner 403, renter/owner→admin 403.
+  - Suspension and reactivation flow with audit; the status check is tested on its own.
+  - CLI admin creation and input validation.
+  - SMTP adapter (STARTTLS, login, failures).
+  - Email failure does not undo registration.
+- Mutation checks: removing the role check, the token-version check, the status check, or refresh-reuse revocation, or allowing an extra JWT algorithm, each made tests **fail**. The status-check mutation first went undetected, so a dedicated test was added.
+- Live end-to-end run (temporary `car_rental_e2e` database, real uvicorn, then dropped):
+  - CLI admin creation.
+  - Registration (ADMIN attempt → 422).
+  - Console email link → verification.
+  - RBAC matrix:
+
+    | Endpoint | renter | owner | admin | anonymous |
+    |----------|--------|-------|-------|-----------|
+    | owner endpoint | 403 | 200 | — | — |
+    | admin list | 403 | 403 | 200 | 401 |
+
+  - Suspension → access 401 / refresh 401 / login 403; reactivation → login 200.
+  - Audit trail `admin.created`, `user.suspended`, `user.reactivated`.
+  - 3/3 password hashes Argon2id; 0 plaintext passwords in server logs.
+- `ruff check .` and `ruff format --check .` passed. `alembic check`: no drift. `pip check` clean. Fresh venv from `requirements-dev.txt`: 129 passed.
+- Problems found and fixed during the stage:
+  - Production mode could not start with the console mailer, so an SMTP adapter was added.
+  - The CLI accepted invalid emails.
+  - FastAPI 0.143 nests included routers, so the route sweep now uses the OpenAPI schema.
+  - Duplicate enum CHECKs in autogenerate.
+
+Outstanding limitations:
+- **No rate limiting or login lockout yet.** Brute-force protection is planned for Stage 17 (needs shared storage such as Redis when running more than one instance).
+- After a single-session logout, that session's access token stays valid until it expires (at most 15 minutes). Logout-all, password reset, and suspension invalidate access tokens immediately.
+- Registration reveals that an email is already registered (409) as a usability trade-off. Login and password reset do not.
+- Logging in does not require a verified email. Booking eligibility (Stage 06/10) will require it, as BR-2 states.
+- SMTP delivery is tested against a fake SMTP server only. No real provider account is configured; one is needed before staging or production.
+- The mobile app's login and registration screens are not yet connected to these endpoints (Stage 09 connects the app; tokens will be stored with `expo-secure-store`).
+
+Next stage:
+- Stage 06: Customer Eligibility and Document Verification.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -312,6 +394,7 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env            # put the same password into DATABASE_URL / TEST_DATABASE_URL
 alembic upgrade head
+python -m app.cli create-admin --email you@example.com --full-name "Your Name"   # first administrator
 ```
 
 *Planned:* admin dashboard (`npm install` in `admin-dashboard/`, Stage 15).
@@ -321,7 +404,8 @@ alembic upgrade head
 - Each application will provide a `.env.example` with placeholder values. Copy it to `.env` and fill in local values.
 - `.env` files are git-ignored. Never commit real secrets (JWT keys, database passwords, payment keys, Maps keys).
 - **Root (Docker Compose):** `.env.example` lists `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, and `POSTGRES_PORT`. Use a random password, e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
-- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, and `DATABASE_ECHO`. See [backend/README.md](backend/README.md#configuration).
+- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, `DATABASE_ECHO`, `JWT_SECRET_KEY` (required; generate a random 64-byte value), token lifetimes, `EMAIL_BACKEND` (`console` or `smtp`), `EMAIL_FROM`, `SMTP_*`, and `APP_LINK_BASE_URL`. See [backend/README.md](backend/README.md#configuration).
+- Production refuses to start with `EMAIL_BACKEND=console`, and `JWT_SECRET_KEY` must be at least 32 characters.
 - **Mobile:** no environment variables yet. The API URL is added in Stage 09.
 
 ## 11. Database Setup
@@ -406,14 +490,23 @@ With the backend running in a non-production environment:
 - ReDoc: http://localhost:8000/redoc
 - OpenAPI schema: http://localhost:8000/api/v1/openapi.json
 
-These are disabled when `APP_ENV=production`. Current endpoints:
-`GET /api/v1/health`. Every error uses the envelope
-`{"error": {"code", "message", "details"?}}`.
+These are disabled when `APP_ENV=production`. Use **Authorize** in Swagger UI with
+an access token from `POST /api/v1/auth/login`.
+
+Current endpoints: health; auth (register, login, refresh, logout, logout-all,
+verify-email, resend, password-reset request and confirm); `GET /users/me`;
+owner `GET /owners/me/profile`; admin `GET /admin/users` and
+`POST /admin/users/{id}/suspend|reactivate`. The full table with access rules is in
+[backend/README.md](backend/README.md#authentication-and-authorisation). Every
+error uses the envelope `{"error": {"code", "message", "details"?}}`.
 
 ## 17. Security and Privacy
 
 - The backend enforces all authorisation. Role, price, eligibility, and payment status values sent by clients are never trusted.
-- Passwords are hashed (Argon2id/bcrypt). Tokens are short-lived and revocable.
+- Passwords are hashed with Argon2id. Access tokens last 15 minutes and carry no roles. Refresh tokens are hashed, rotated, and revocable, with reuse detection.
+- Administrator accounts are created only with the operator CLI (`python -m app.cli create-admin`), never through the API.
+- Suspension, password reset, and logout-all invalidate all of a user's sessions immediately. Login and reset responses do not reveal whether an email is registered.
+- An automated test checks that every non-public endpoint rejects anonymous requests.
 - ID and licence documents are stored privately, access is logged, and their numbers never appear in public APIs or logs (POPIA).
 - Money is stored as exact decimals in ZAR. Payments are verified by signed webhooks and processed idempotently.
 - Location sharing is limited to the assigned delivery person while a delivery is active, and is visible only to the booking's renter and administrators.
@@ -426,19 +519,24 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9).
 
 - Open business decisions (commission and payouts, cancellation policy, delivery model, insurance age rules, VAT, payment provider) are listed in [docs/requirements.md §5](docs/requirements.md#5-open-business-decisions). They do not block Stages 02–05.
 - `admin-dashboard/` contains only a `.gitkeep` placeholder.
-- Backend: no authentication or business endpoints yet (Stage 05 onward). Expired booking holds are released by the booking service in Stage 10.
+- Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
+- **No login rate limiting or lockout yet** (Stage 17).
+- Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
 - Mobile `npm audit`: 36 advisories in Expo build tooling (not app runtime). Deferred to Stage 17; `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–04 are COMPLETE. The mobile app foundation runs with prototype data. The FastAPI backend runs on PostgreSQL 16 with the core schema (12 tables, enforced integrity rules) managed by Alembic, and 62 passing tests. Authentication (Stage 05) has not started.
+Stages 01–05 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with the core schema plus authentication and authorisation (registration, login, token rotation, RBAC, email verification, password reset, suspension, CLI admin creation), and 129 passing tests. Stage 06 has not started.
 
 ## 20. Next Stage
 
-**Stage 05: Authentication and Authorisation.** Renter and owner registration,
-login and logout, secure password hashing, access and refresh tokens, role-based
-access control on protected routes, email verification (through a provider
-adapter), password reset, account suspension, and a controlled CLI for creating
-administrators, with security tests. Waiting for owner approval to begin.
+**Stage 06: Customer Eligibility and Document Verification.** Date-of-birth
+capture with the 18+ rule; secure private upload of the SA ID document and the
+driving licence; verification status managed by the backend
+(NOT_SUBMITTED / PENDING / APPROVED / REJECTED / REQUIRES_MORE_INFORMATION);
+administrator review workflow with recorded decisions; document access controls;
+and backend eligibility checks. Open decisions that affect this stage: OPEN-4
+(insurer age and licence-duration rules), OPEN-5 (foreign nationals), OPEN-9
+(manual review or an external KYC service). Waiting for owner approval to begin.

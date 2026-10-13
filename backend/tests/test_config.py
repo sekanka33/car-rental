@@ -12,6 +12,7 @@ def test_defaults_are_development_without_environment(monkeypatch: pytest.Monkey
     for name in ("APP_ENV", "APP_NAME", "LOG_LEVEL", "CORS_ORIGINS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 40)
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
@@ -26,6 +27,10 @@ def test_settings_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("LOG_LEVEL", "warning")
     monkeypatch.setenv("CORS_ORIGINS", "https://admin.example.co.za, http://localhost:8081 ,")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:s3cret@db.internal:5432/rentals")
+    monkeypatch.setenv("JWT_SECRET_KEY", "k" * 40)
+    monkeypatch.setenv("EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-s3cret")
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
@@ -36,6 +41,7 @@ def test_settings_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     assert not settings.docs_enabled
     assert settings.database_url.get_secret_value().endswith("@db.internal:5432/rentals")
     assert "s3cret" not in repr(settings)
+    assert settings.smtp_host == "smtp.example.com"
 
 
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:

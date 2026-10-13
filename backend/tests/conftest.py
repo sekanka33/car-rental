@@ -28,8 +28,12 @@ TEST_DATABASE_URL = _TestDatabaseSettings().test_database_url
 if TEST_DATABASE_URL and not TEST_DATABASE_URL.rsplit("/", 1)[-1].endswith("_test"):
     raise RuntimeError("TEST_DATABASE_URL must name a database ending in '_test' (it is wiped).")
 
-# app.main builds a module-level app at import time; give it a database URL first.
+# Signing key used only by the test suite.
+TEST_JWT_SECRET = "test-only-signing-key-0123456789abcdefghijklmnopqrstuvwxyz"
+
+# app.main builds a module-level app at import time; give it required settings first.
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL or UNREACHABLE_DATABASE_URL)
+os.environ.setdefault("JWT_SECRET_KEY", TEST_JWT_SECRET)
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -49,6 +53,7 @@ def make_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "app_env": Environment.TEST,
         "database_url": TEST_DATABASE_URL or UNREACHABLE_DATABASE_URL,
+        "jwt_secret_key": TEST_JWT_SECRET,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

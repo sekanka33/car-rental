@@ -24,10 +24,31 @@ class AppError(Exception):
 
     status_code = 400
     code = "bad_request"
+    headers: dict[str, str] | None = None
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class NotFoundError(AppError):
+    status_code = 404
+    code = "not_found"
+
+
+class AuthenticationError(AppError):
+    """Missing, invalid or expired credentials (401)."""
+
+    status_code = 401
+    code = "not_authenticated"
+    headers = {"WWW-Authenticate": "Bearer"}
+
+
+class PermissionDeniedError(AppError):
+    """Authenticated but not allowed (403)."""
+
+    status_code = 403
+    code = "permission_denied"
 
 
 def _error_response(
@@ -54,7 +75,7 @@ def _status_code_slug(status_code: int) -> str:
 
 async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)  # noqa: S101 - registered only for AppError
-    return _error_response(exc.status_code, exc.code, exc.message)
+    return _error_response(exc.status_code, exc.code, exc.message, headers=exc.headers)
 
 
 async def http_exception_handler(_: Request, exc: Exception) -> JSONResponse:
