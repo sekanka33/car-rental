@@ -1,0 +1,88 @@
+"""Domain enumerations stored in the database (as VARCHAR + CHECK constraints)."""
+
+from enum import StrEnum
+
+
+class RoleName(StrEnum):
+    ADMIN = "ADMIN"
+    OWNER = "OWNER"
+    RENTER = "RENTER"
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
+
+
+class VerificationStatus(StrEnum):
+    NOT_SUBMITTED = "NOT_SUBMITTED"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    REQUIRES_MORE_INFORMATION = "REQUIRES_MORE_INFORMATION"
+
+
+class VehicleStatus(StrEnum):
+    DRAFT = "DRAFT"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUSPENDED = "SUSPENDED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class Transmission(StrEnum):
+    AUTOMATIC = "AUTOMATIC"
+    MANUAL = "MANUAL"
+
+
+class FuelType(StrEnum):
+    PETROL = "PETROL"
+    DIESEL = "DIESEL"
+    HYBRID = "HYBRID"
+    ELECTRIC = "ELECTRIC"
+
+
+class BookingStatus(StrEnum):
+    PENDING_PAYMENT = "PENDING_PAYMENT"
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
+    DELIVERY_SCHEDULED = "DELIVERY_SCHEDULED"
+    IN_TRANSIT = "IN_TRANSIT"
+    DELIVERED = "DELIVERED"
+    ACTIVE_RENTAL = "ACTIVE_RENTAL"
+    RETURN_PENDING = "RETURN_PENDING"
+    COMPLETED = "COMPLETED"
+
+
+# Bookings in these states reserve the vehicle; the database rejects overlaps among them.
+BLOCKING_BOOKING_STATUSES: tuple[BookingStatus, ...] = (
+    BookingStatus.PENDING_PAYMENT,
+    BookingStatus.CONFIRMED,
+    BookingStatus.DELIVERY_SCHEDULED,
+    BookingStatus.IN_TRANSIT,
+    BookingStatus.DELIVERED,
+    BookingStatus.ACTIVE_RENTAL,
+    BookingStatus.RETURN_PENDING,
+)
+
+
+class PaymentStatus(StrEnum):
+    PENDING = "PENDING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    REFUNDED = "REFUNDED"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
+
+
+class DeliveryStatus(StrEnum):
+    PENDING_ASSIGNMENT = "PENDING_ASSIGNMENT"
+    SCHEDULED = "SCHEDULED"
+    EN_ROUTE = "EN_ROUTE"
+    ARRIVED = "ARRIVED"
+    DELIVERED = "DELIVERED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"

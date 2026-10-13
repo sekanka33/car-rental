@@ -73,8 +73,11 @@ Expected additions later: `identity_documents`, `vehicle_documents`,
 
 Key integrity decisions:
 - Money: `NUMERIC(12,2)` with a `currency CHAR(3) DEFAULT 'ZAR'` check.
-- Booking overlap: the `btree_gist` extension plus an `EXCLUDE USING gist (vehicle_id WITH =, tstzrange(start_at, end_at) WITH &&) WHERE (status IN (...blocking states...))` constraint.
-- Idempotency: unique constraint on `(provider, provider_event_id)` in `payment_events`.
+- Booking overlap: the `btree_gist` extension plus `EXCLUDE USING gist (vehicle_id WITH =, tstzrange(start_at, end_at, '[)') WITH &&) WHERE (status IN (...blocking states...))`. Implemented in Stage 04, and a concurrency test confirms it.
+- Enums: `VARCHAR` + `CHECK` constraints rather than native PostgreSQL enum types, which are easier to change in migrations.
+- Idempotency: unique `(provider, provider_reference)` on `payments` and a partial unique index allowing one `SUCCEEDED` payment per booking. A unique `(provider, provider_event_id)` on `payment_events` follows in Stage 11.
+- Audit: `audit_logs` is append-only, enforced by a trigger.
+- Sessions: sync SQLAlchemy 2.x with psycopg 3. FastAPI runs sync routes in a threadpool. Services commit explicitly, and failed requests roll back.
 - Timestamps: `timestamptz`, stored in UTC.
 - UUID primary keys for externally visible entities, so IDs cannot be guessed by enumeration.
 
@@ -128,7 +131,9 @@ car-rental/
 │   ├── architecture.md
 │   └── development-roadmap.md
 ├── mobile/                 # Expo React Native app        (Stage 02)
-├── backend/                # FastAPI service              (Stage 03)
+├── backend/                # FastAPI service              (Stage 03–04)
+├── docker-compose.yml      # Local PostgreSQL 16          (Stage 04)
+├── infra/postgres/init/    # Container init (creates the test database)
 └── admin-dashboard/        # React + Tailwind web admin   (Stage 15)
 ```
 

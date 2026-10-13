@@ -1,9 +1,11 @@
 from fastapi.testclient import TestClient
 
 from app.core.config import API_VERSION
+from tests.conftest import requires_db
 
 
-def test_health_returns_ok(client: TestClient) -> None:
+@requires_db
+def test_health_returns_ok(client: TestClient, migrated_engine) -> None:
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
@@ -12,6 +14,7 @@ def test_health_returns_ok(client: TestClient) -> None:
         "service": "Car Rental API",
         "version": API_VERSION,
         "environment": "test",
+        "database": "ok",
     }
 
 

@@ -11,6 +11,7 @@ from app.api.router import api_router
 from app.core.config import API_VERSION, Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.db.session import build_engine, build_session_factory
 from app.schemas.common import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
+    # Connections are opened lazily, so the app starts even if the database is down;
+    # /health then reports it as unavailable.
+    engine = build_engine(settings.database_url.get_secret_value(), echo=settings.database_echo)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("Starting %s (%s)", settings.app_name, settings.app_env.value)
         yield
+        engine.dispose()
 
     docs = settings.docs_enabled
     app = FastAPI(
@@ -35,11 +41,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=f"{settings.api_v1_prefix}/openapi.json" if docs else None,
         responses={
             422: {"model": ErrorResponse, "description": "Validation error"},
+            503: {"model": ErrorResponse, "description": "Service unavailable"},
             500: {"model": ErrorResponse, "description": "Internal server error"},
         },
     )
 
     app.state.settings = settings
+    app.state.engine = engine
+    app.state.session_factory = build_session_factory(engine)
 
     if settings.cors_origins:
         app.add_middleware(

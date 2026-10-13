@@ -1,5 +1,8 @@
-# Runtime dependencies (pinned; verified together with `pip check` in Stage 03)
+# Runtime dependencies (pinned; verified together with `pip check`)
+alembic==1.20.0
 fastapi==0.143.0
+psycopg[binary]==3.3.6
 pydantic==2.14.1
 pydantic-settings==2.15.0
+sqlalchemy==2.1.4
 uvicorn[standard]==0.54.0

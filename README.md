@@ -4,9 +4,9 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–03 complete. The mobile app foundation runs with
-> **prototype sample data**. The FastAPI backend runs with a health endpoint but
-> has no database, authentication, or business endpoints yet. Commands for
+> **Current state:** Stages 01–04 complete. The mobile app foundation runs with
+> **prototype sample data**. The FastAPI backend runs on PostgreSQL with the core
+> schema and migrations, but has no authentication or business endpoints yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -35,8 +35,8 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 | Area | Technology |
 |------|------------|
 | Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, ESLint 9 (`eslint-config-expo`). Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
-| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: SQLAlchemy 2.x, Alembic (Stage 04), WebSockets (Stage 13) |
-| Database | PostgreSQL 16 |
+| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
+| Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
 | Payments | South African ZAR provider. Candidates: Paystack, PayFast, Peach Payments, Ozow. Decided in Stage 11. |
 | Maps | Google Maps Platform (Maps SDKs, Routes API) |
@@ -76,9 +76,13 @@ car-rental/
 │   ├── src/data/           # PROTOTYPE sample data (removed in Stage 09)
 │   └── tailwind.config.js  # Theme tokens
 ├── backend/                # FastAPI service (Stage 03) — see backend/README.md
-│   ├── app/                # main.py, core/ (config, errors), api/routes/, schemas/
-│   ├── tests/              # Pytest suite
+│   ├── app/                # main.py, core/, api/routes/, db/, models/, schemas/
+│   ├── migrations/         # Alembic migrations
+│   ├── tests/              # Pytest suite (tests/db/ uses real PostgreSQL)
 │   └── .env.example        # Placeholder settings (copy to .env)
+├── docker-compose.yml      # Local PostgreSQL 16 (dev + test databases)
+├── infra/postgres/init/    # Creates the test database on first start
+├── .env.example            # Root settings for docker compose (copy to .env)
 └── admin-dashboard/        # React admin — empty placeholder until Stage 15
 ```
 
@@ -95,7 +99,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 01 | Repository Inspection and Project Planning | [x] COMPLETE | Repo inspected; docs and structure checked |
 | 02 | Mobile Application Foundation | [x] COMPLETE | tsc, ESLint, expo-doctor, 3-platform bundle, web smoke test (16/16) |
 | 03 | Python Backend Foundation | [x] COMPLETE | pytest 19/19, ruff, live server checks, clean-venv install |
-| 04 | PostgreSQL and Database Foundation | NOT STARTED | Not tested |
+| 04 | PostgreSQL and Database Foundation | [x] COMPLETE | pytest 62/62 on PostgreSQL 16, migration round-trip, alembic check, concurrency test |
 | 05 | Authentication and Authorisation | NOT STARTED | Not tested |
 | 06 | Customer Eligibility and Document Verification | NOT STARTED | Not tested |
 | 07 | Owner Profiles and Vehicle Registration | NOT STARTED | Not tested |
@@ -221,6 +225,54 @@ Outstanding limitations:
 Next stage:
 - Stage 04: PostgreSQL and Database Foundation.
 
+### Stage 04: PostgreSQL and Database Foundation
+
+Status: COMPLETE (2026-10-13)
+
+Implemented:
+- PostgreSQL 16 through Docker Compose (`car-rental-db`, `127.0.0.1:5433`, persistent volume, health check). An init script creates the separate `car_rental_test` database. The password comes from the git-ignored root `.env`.
+- SQLAlchemy 2.1 (sync, psycopg 3) with engine, session factory, and a `get_db` dependency. Services commit explicitly and failed requests roll back. Pool uses pre-ping.
+- `DATABASE_URL` is a required setting, stored as `SecretStr` and validated to be `postgresql+psycopg://`.
+- `/api/v1/health` now checks the database: 200 `"database": "ok"`, or 503 `"degraded"`/`"unavailable"`.
+- Alembic configured with the URL read from settings (never from `alembic.ini`), a deterministic constraint naming convention, and dated migration file names.
+- Migration `5c4b7a10d711` creates the 12 core tables (users, roles, user_roles, owner_profiles, customer_profiles, vehicles, vehicle_images, vehicle_prices, bookings, payments, deliveries, audit_logs), seeds roles ADMIN/OWNER/RENTER, enables `btree_gist`, and adds the append-only trigger on `audit_logs`.
+- Constraints: UUID keys; FKs with deliberate `CASCADE`/`RESTRICT`/`SET NULL`; enum CHECKs; exact `NUMERIC(12,2)` ZAR money; booking price-snapshot consistency; **an exclusion constraint against overlapping bookings**; one successful payment per booking; unique provider references; one delivery per booking; case-insensitive unique email; VIN, registration, coordinate, and timestamp consistency checks.
+
+Files changed:
+- New: `docker-compose.yml`, `.env.example` (root), `infra/postgres/init/01-create-test-database.sh`, `backend/alembic.ini`, `backend/migrations/` (`env.py`, `script.py.mako`, `versions/2026_10_13_1112-5c4b7a10d711_create_core_tables.py`), `backend/app/db/` (`base.py`, `session.py`), `backend/app/models/` (`enums.py`, `user.py`, `vehicle.py`, `booking.py`, `payment.py`, `delivery.py`, `audit_log.py`, `__init__.py`), `backend/tests/db/` (`factories.py`, `test_migrations.py`, `test_constraints.py`, `test_concurrency.py`, `test_session.py`).
+- Modified: `backend/app/core/config.py`, `backend/app/main.py`, `backend/app/api/routes/health.py`, `backend/app/schemas/health.py`, `backend/requirements.txt`, `backend/pyproject.toml`, `backend/.env.example`, `backend/README.md`, `backend/tests/conftest.py`, `backend/tests/test_config.py`, `backend/tests/test_health.py`, `docs/architecture.md`, `docs/business-rules.md`, `docs/development-roadmap.md`, `README.md`.
+- Local only (git-ignored): root `.env` (generated random dev DB password), `backend/.env`.
+
+Verification:
+- `pytest -ra`: **62 passed, 0 skipped, 0 failed** against PostgreSQL 16.15. Covered:
+  - Migrations: all tables created; `compare_metadata` finds no model/migration drift; downgrade to base then upgrade again; roles seeded.
+  - Users, roles, and profiles: case-insensitive unique email; suspension consistency; enum CHECK; role assignment and cascade; customer profile defaults.
+  - Vehicles: VIN, registration, and uniqueness rules; approval timestamp required.
+  - Money: exact `Decimal` round trip; invalid prices rejected; referenced price history cannot be deleted.
+  - Bookings: price-snapshot consistency; overlap rejection; back-to-back allowed; cancelled, expired, and completed bookings release their dates; re-activating into a conflict rejected.
+  - Payments and deliveries: single successful payment; provider-reference uniqueness; one delivery per booking with valid coordinates.
+  - Audit: UPDATE/DELETE blocked; user with audit history cannot be deleted.
+  - Concurrency: two threads committing overlapping bookings at the same moment, one commits and the other is rejected by `ex_bookings_vehicle_period_overlap`.
+  - Sessions and health: failed request rolls back; committed work persists; health returns 503 when the database is unreachable.
+- Mutation check: with the exclusion constraint removed from the migration, the 3 overlap and concurrency tests **failed** as expected. The constraint was then restored.
+- `alembic upgrade head`, `downgrade base`, `upgrade head` on the development database succeeded. `alembic check`: "No new upgrade operations detected". `alembic upgrade head --sql` renders offline.
+- Live server: health 200 with the database up, 503 after `docker stop car-rental-db`, back to 200 after restart without restarting the API. The database password does not appear in server logs.
+- `ruff check .` and `ruff format --check .` passed. `pip check` clean. A fresh venv from `requirements-dev.txt` passes 62/62.
+- Problems found and fixed during the stage:
+  - Autogenerate emitted duplicate enum CHECK constraints with the same name.
+  - `btree_gist` was missing.
+  - `func.lower("email")` would have indexed a constant string.
+  - `audit_logs.actor_user_id ON DELETE SET NULL` conflicted with the append-only trigger, so it is now `RESTRICT`.
+
+Outstanding limitations:
+- No repositories or services yet. They are added with the first features that use them (Stage 05 onward).
+- Expired `PENDING_PAYMENT` holds keep blocking dates until the booking service marks them `EXPIRED` (Stage 10). The database cannot compare against `now()` in a constraint.
+- Tables for later features (documents, payment events, refunds, location updates, refresh tokens, and so on) are added in their stages.
+- Docker Compose is for local development only. Production database hosting, backups, and TLS are covered in Stage 18.
+
+Next stage:
+- Stage 05: Authentication and Authorisation.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -231,8 +283,8 @@ Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
 | Node.js | 20.20.2 | Mobile, admin dashboard |
 | npm | 10.8.2 | Mobile, admin dashboard |
 | Python | 3.12.3 (with `venv`) | Backend |
-| PostgreSQL | 16.15 (local service running) | Backend database |
-| Docker / Compose | 29.8.1 / v5.5.1 | Optional: containerised Postgres |
+| PostgreSQL | 16.15 (system service present but **not used**; the project uses the Docker container on port 5433) | Backend database |
+| Docker / Compose | 29.8.1 / v5.5.1 | Local PostgreSQL (`docker compose up -d db`) |
 
 To run the mobile app on a device: the **Expo Go** app (must support SDK 57),
 or an Android emulator or iOS simulator. Needed in later stages: Google Maps
@@ -248,12 +300,18 @@ cd car-rental
 cd mobile
 npm install
 
+# Database (repository root)
+cd ..
+cp .env.example .env            # set POSTGRES_PASSWORD to a random value
+docker compose up -d db
+
 # Backend
-cd ../backend
+cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env
+cp .env.example .env            # put the same password into DATABASE_URL / TEST_DATABASE_URL
+alembic upgrade head
 ```
 
 *Planned:* admin dashboard (`npm install` in `admin-dashboard/`, Stage 15).
@@ -262,14 +320,29 @@ cp .env.example .env
 
 - Each application will provide a `.env.example` with placeholder values. Copy it to `.env` and fill in local values.
 - `.env` files are git-ignored. Never commit real secrets (JWT keys, database passwords, payment keys, Maps keys).
-- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, and `CORS_ORIGINS` (no secrets yet). See [backend/README.md](backend/README.md#configuration).
+- **Root (Docker Compose):** `.env.example` lists `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, and `POSTGRES_PORT`. Use a random password, e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
+- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, and `DATABASE_ECHO`. See [backend/README.md](backend/README.md#configuration).
 - **Mobile:** no environment variables yet. The API URL is added in Stage 09.
 
 ## 11. Database Setup
 
-Not yet implemented (Stage 04). The plan is a local PostgreSQL 16 database for
-development and a separate test database, with schema managed only through
-Alembic migrations.
+Local PostgreSQL 16 runs in Docker on `127.0.0.1:5433`. The first start creates
+`car_rental` (development) and `car_rental_test` (tests).
+
+```bash
+docker compose up -d db                 # start (repository root)
+docker compose ps                       # should show "healthy"
+cd backend && source .venv/bin/activate
+alembic upgrade head                    # apply migrations
+alembic current                         # show applied revision
+alembic downgrade -1                    # revert the last migration
+alembic revision --autogenerate -m "…"  # new migration from model changes (review it!)
+alembic check                           # verify models and migrations match
+docker compose down -v                  # DELETE all local database data
+```
+
+The schema changes only through Alembic migrations. Integrity rules enforced by
+the database are listed in [backend/README.md](backend/README.md#integrity-rules-enforced-by-postgresql).
 
 ## 12. Running the Mobile Application
 
@@ -292,8 +365,9 @@ source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-Health check: http://localhost:8000/api/v1/health. All API routes live under
-`/api/v1`. More detail is in [backend/README.md](backend/README.md).
+The database must be running (`docker compose up -d db`). Health check:
+http://localhost:8000/api/v1/health (503 if the database is unreachable). All API
+routes live under `/api/v1`. More detail is in [backend/README.md](backend/README.md).
 
 ## 14. Running the Admin Dashboard
 
@@ -315,12 +389,14 @@ Backend:
 ```bash
 cd backend
 source .venv/bin/activate
-pytest                 # automated tests
+pytest -ra             # automated tests (database tests need the Docker database)
 ruff check .           # lint
 ruff format --check .  # formatting
+alembic check          # models match migrations
 ```
 
-Dashboard checks are added in Stage 15.
+Database tests use `TEST_DATABASE_URL`. Its schema is **dropped and recreated** on
+every run, so the name must end in `_test`. Dashboard checks are added in Stage 15.
 
 ## 16. API Documentation
 
@@ -350,19 +426,19 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9).
 
 - Open business decisions (commission and payouts, cancellation policy, delivery model, insurance age rules, VAT, payment provider) are listed in [docs/requirements.md §5](docs/requirements.md#5-open-business-decisions). They do not block Stages 02–05.
 - `admin-dashboard/` contains only a `.gitkeep` placeholder.
-- Backend: no database, authentication, or business endpoints yet. The health check does not cover the database (Stage 04).
+- Backend: no authentication or business endpoints yet (Stage 05 onward). Expired booking holds are released by the booking service in Stage 10.
+- The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
 - Mobile `npm audit`: 36 advisories in Expo build tooling (not app runtime). Deferred to Stage 17; `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–03 are COMPLETE. The mobile app foundation runs with prototype data. The FastAPI backend runs with configuration, error handling, a health endpoint, and 19 passing tests. There is no database yet. Stage 04 has not started.
+Stages 01–04 are COMPLETE. The mobile app foundation runs with prototype data. The FastAPI backend runs on PostgreSQL 16 with the core schema (12 tables, enforced integrity rules) managed by Alembic, and 62 passing tests. Authentication (Stage 05) has not started.
 
 ## 20. Next Stage
 
-**Stage 04: PostgreSQL and Database Foundation.** Add SQLAlchemy 2.x and
-Alembic, database connection and session management, and the initial models and
-migrations for the core tables (users, roles, user_roles, owner_profiles,
-customer_profiles, vehicles, vehicle_images, vehicle_prices, bookings,
-payments, deliveries, audit_logs), with constraints and database tests against
-a real PostgreSQL test database. Waiting for owner approval to begin.
+**Stage 05: Authentication and Authorisation.** Renter and owner registration,
+login and logout, secure password hashing, access and refresh tokens, role-based
+access control on protected routes, email verification (through a provider
+adapter), password reset, account suspension, and a controlled CLI for creating
+administrators, with security tests. Waiting for owner approval to begin.

@@ -43,7 +43,7 @@ Additional rules:
 ## BR-5 Bookings
 1. The backend calculates the price. Client-sent totals are ignored.
 2. A new booking is `PENDING_PAYMENT` and holds the vehicle for `BOOKING_HOLD_MINUTES` (default 15). After that it becomes `EXPIRED` and releases the dates.
-3. No two bookings in a blocking state (`PENDING_PAYMENT` with an unexpired hold, `CONFIRMED`, or later active states) may overlap for the same vehicle. A PostgreSQL exclusion constraint enforces this, so concurrent requests cannot both succeed.
+3. No two bookings in a blocking state (`PENDING_PAYMENT`, `CONFIRMED`, `DELIVERY_SCHEDULED`, `IN_TRANSIT`, `DELIVERED`, `ACTIVE_RENTAL`, `RETURN_PENDING`) may overlap for the same vehicle. A PostgreSQL exclusion constraint enforces this, so concurrent requests cannot both succeed. Periods are half-open (`[start, end)`), so back-to-back bookings are allowed. A pending hold blocks its dates until its status changes. The booking service marks expired holds `EXPIRED` before it checks availability (Stage 10).
 4. The start date must be in the future, the end date must be after the start, and the length must be within the configured minimum and maximum.
 5. Allowed status transitions (refined in Stage 10):
 
@@ -82,5 +82,7 @@ PENDING_PAYMENT ─► CONFIRMED ─► DELIVERY_SCHEDULED ─► IN_TRANSIT ─
 5. Retention: verification documents are kept only as long as required for legal and insurance purposes (period to be confirmed with legal advice), then deleted.
 
 ## BR-9 Audit
+Audit entries are append-only: the database rejects UPDATE and DELETE, and users with
+audit history cannot be hard-deleted (they are deactivated or anonymised instead).
 These actions write an `audit_logs` entry recording the actor, action, entity, time, and before/after summary (with sensitive values masked):
 vehicle approval, rejection, and suspension; price changes; verification decisions; account suspension and reinstatement; refunds; manual booking or payment overrides; administrator account creation; and private document access.
