@@ -4,8 +4,9 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stage 02 complete. The mobile app foundation runs with
-> **prototype sample data** and no backend or authentication yet. Commands for
+> **Current state:** Stages 01–03 complete. The mobile app foundation runs with
+> **prototype sample data**. The FastAPI backend runs with a health endpoint but
+> has no database, authentication, or business endpoints yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -34,7 +35,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 | Area | Technology |
 |------|------------|
 | Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, ESLint 9 (`eslint-config-expo`). Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
-| Backend | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x, Alembic, Pytest, WebSockets |
+| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: SQLAlchemy 2.x, Alembic (Stage 04), WebSockets (Stage 13) |
 | Database | PostgreSQL 16 |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
 | Payments | South African ZAR provider. Candidates: Paystack, PayFast, Peach Payments, Ozow. Decided in Stage 11. |
@@ -74,7 +75,10 @@ car-rental/
 │   ├── src/components/     # Reusable UI components
 │   ├── src/data/           # PROTOTYPE sample data (removed in Stage 09)
 │   └── tailwind.config.js  # Theme tokens
-├── backend/                # FastAPI service — empty placeholder until Stage 03
+├── backend/                # FastAPI service (Stage 03) — see backend/README.md
+│   ├── app/                # main.py, core/ (config, errors), api/routes/, schemas/
+│   ├── tests/              # Pytest suite
+│   └── .env.example        # Placeholder settings (copy to .env)
 └── admin-dashboard/        # React admin — empty placeholder until Stage 15
 ```
 
@@ -90,7 +94,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 |-------|------|--------|--------------|
 | 01 | Repository Inspection and Project Planning | [x] COMPLETE | Repo inspected; docs and structure checked |
 | 02 | Mobile Application Foundation | [x] COMPLETE | tsc, ESLint, expo-doctor, 3-platform bundle, web smoke test (16/16) |
-| 03 | Python Backend Foundation | NOT STARTED | Not tested |
+| 03 | Python Backend Foundation | [x] COMPLETE | pytest 19/19, ruff, live server checks, clean-venv install |
 | 04 | PostgreSQL and Database Foundation | NOT STARTED | Not tested |
 | 05 | Authentication and Authorisation | NOT STARTED | Not tested |
 | 06 | Customer Eligibility and Document Verification | NOT STARTED | Not tested |
@@ -180,6 +184,43 @@ Outstanding limitations:
 Next stage:
 - Stage 03: Python Backend Foundation.
 
+### Stage 03: Python Backend Foundation
+
+Status: COMPLETE (2026-10-13)
+
+Implemented:
+- FastAPI app in `backend/` using an app factory (`create_app(settings)`) and a `lifespan` handler (Starlette 1.x no longer supports `on_event`).
+- Configuration via `pydantic-settings`: `APP_ENV` (development/test/staging/production, validated), `APP_NAME`, `LOG_LEVEL` (validated), `CORS_ORIGINS` (comma-separated). Values come from environment variables or `backend/.env`. Nothing secret is hardcoded, and there are no secrets yet.
+- Routing: `/api/v1` prefix through `app/api/router.py`, with one module per resource in `app/api/routes/`.
+- `GET /api/v1/health` returns status, service, version, and environment.
+- API docs (`/docs`, `/redoc`, `/api/v1/openapi.json`) are enabled outside production and disabled when `APP_ENV=production`.
+- Error handling: a consistent `{"error": {code, message, details?}}` envelope for 404/405/HTTP errors, validation errors (422, submitted values never echoed back), an `AppError` base class for business errors, and unhandled exceptions (generic 500; full traceback logged on the server only).
+- CORS restricted to the configured origins.
+- Pinned dependencies (`requirements.txt` runtime, `requirements-dev.txt` dev tools), Ruff lint and format config, Pytest config in `pyproject.toml`, and `backend/.env.example`.
+
+Files changed:
+- New: `backend/app/**` (`main.py`, `core/config.py`, `core/errors.py`, `core/logging.py`, `api/router.py`, `api/routes/health.py`, `schemas/common.py`, `schemas/health.py`), `backend/tests/**` (`conftest.py`, `test_health.py`, `test_docs.py`, `test_errors.py`, `test_config.py`), `backend/requirements.txt`, `backend/requirements-dev.txt`, `backend/pyproject.toml`, `backend/.env.example`, `backend/README.md`.
+- Removed: `backend/.gitkeep`.
+- Modified: `README.md`, `docs/development-roadmap.md`.
+- Local only (git-ignored): `backend/.venv/`, `backend/.env` (copied from `.env.example`).
+
+Verification (run in `backend/`):
+- `pytest`: **19 passed**, 0 failed, 0 warnings. Tests cover health; docs on and off by environment; 404/405 envelopes; validation errors (including malformed JSON and not echoing a password); `AppError` mapping; 500 hiding internal details while still logging them; settings loaded from environment; invalid settings rejected; CORS allow and deny.
+- `ruff check .`: all checks passed. `ruff format --check .`: 19 files formatted.
+- `pip check`: no broken requirements.
+- Clean install: a fresh venv with `pip install -r requirements-dev.txt` passed `pip check`, pytest 19/19, and Ruff.
+- Live server (`uvicorn app.main:app --port 8000` with `.env` from `.env.example`): `/api/v1/health` → 200 `{"status":"ok",...,"environment":"development"}`; `/docs` 200; `/redoc` 200; OpenAPI 3.1.0 lists `/api/v1/health`; unknown route → 404 envelope; CORS preflight from `http://localhost:8081` allowed. With `APP_ENV=production`: health 200, `/docs` 404, OpenAPI 404.
+- Bugs found and fixed during the stage: the health route read the global settings instead of the app instance's settings (now `app.state.settings` through `get_app_settings`); Starlette deprecated `httpx` for its test client, so the dev dependency is now `httpx2`.
+
+Outstanding limitations:
+- No database yet. The health check does not test database connectivity (added in Stage 04).
+- No authentication, request IDs, or rate limiting yet (Stages 05 and 17).
+- Logging is plain text to stderr. Structured or JSON logging is planned for Stage 18.
+- The mobile app is not yet connected to the backend (Stage 09).
+
+Next stage:
+- Stage 04: PostgreSQL and Database Foundation.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -206,17 +247,23 @@ cd car-rental
 # Mobile app
 cd mobile
 npm install
+
+# Backend
+cd ../backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
 ```
 
-*Planned:* backend (`python3 -m venv .venv && pip install -r requirements.txt`
-in `backend/`, Stage 03) and admin dashboard (`npm install` in
-`admin-dashboard/`, Stage 15).
+*Planned:* admin dashboard (`npm install` in `admin-dashboard/`, Stage 15).
 
 ## 10. Environment Configuration
 
 - Each application will provide a `.env.example` with placeholder values. Copy it to `.env` and fill in local values.
 - `.env` files are git-ignored. Never commit real secrets (JWT keys, database passwords, payment keys, Maps keys).
-- No environment variables are required yet. The mobile app has no API URL or keys until Stage 09.
+- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, and `CORS_ORIGINS` (no secrets yet). See [backend/README.md](backend/README.md#configuration).
+- **Mobile:** no environment variables yet. The API URL is added in Stage 09.
 
 ## 11. Database Setup
 
@@ -239,7 +286,14 @@ The app currently uses **prototype sample data** and has no real sign-in. See
 
 ## 13. Running the Python Backend
 
-Not yet implemented (Stage 03).
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+```
+
+Health check: http://localhost:8000/api/v1/health. All API routes live under
+`/api/v1`. More detail is in [backend/README.md](backend/README.md).
 
 ## 14. Running the Admin Dashboard
 
@@ -256,13 +310,29 @@ npm run lint        # ESLint (expo lint)
 npx expo-doctor     # dependency / SDK compatibility
 ```
 
-Backend Pytest (Stage 03) and dashboard checks (Stage 15) will be added in
-their stages.
+Backend:
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest                 # automated tests
+ruff check .           # lint
+ruff format --check .  # formatting
+```
+
+Dashboard checks are added in Stage 15.
 
 ## 16. API Documentation
 
-Not yet implemented. FastAPI will serve interactive OpenAPI documentation at
-`/docs` in development (Stage 03).
+With the backend running in a non-production environment:
+
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+- OpenAPI schema: http://localhost:8000/api/v1/openapi.json
+
+These are disabled when `APP_ENV=production`. Current endpoints:
+`GET /api/v1/health`. Every error uses the envelope
+`{"error": {"code", "message", "details"?}}`.
 
 ## 17. Security and Privacy
 
@@ -279,17 +349,20 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9).
 ## 18. Known Issues
 
 - Open business decisions (commission and payouts, cancellation policy, delivery model, insurance age rules, VAT, payment provider) are listed in [docs/requirements.md §5](docs/requirements.md#5-open-business-decisions). They do not block Stages 02–05.
-- `backend/` and `admin-dashboard/` contain only `.gitkeep` placeholders.
+- `admin-dashboard/` contains only a `.gitkeep` placeholder.
+- Backend: no database, authentication, or business endpoints yet. The health check does not cover the database (Stage 04).
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
 - Mobile `npm audit`: 36 advisories in Expo build tooling (not app runtime). Deferred to Stage 17; `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–02 are COMPLETE. The mobile app foundation (navigation, theme, components, six screens) runs with prototype data. No backend exists yet. Stage 03 has not started.
+Stages 01–03 are COMPLETE. The mobile app foundation runs with prototype data. The FastAPI backend runs with configuration, error handling, a health endpoint, and 19 passing tests. There is no database yet. Stage 04 has not started.
 
 ## 20. Next Stage
 
-**Stage 03: Python Backend Foundation.** Create the FastAPI service in
-`backend/`: virtual environment, settings from environment variables,
-`.env.example`, API router structure, `/health` endpoint, request validation,
-error handling, and Pytest. Waiting for owner approval to begin.
+**Stage 04: PostgreSQL and Database Foundation.** Add SQLAlchemy 2.x and
+Alembic, database connection and session management, and the initial models and
+migrations for the core tables (users, roles, user_roles, owner_profiles,
+customer_profiles, vehicles, vehicle_images, vehicle_prices, bookings,
+payments, deliveries, audit_logs), with constraints and database tests against
+a real PostgreSQL test database. Waiting for owner approval to begin.

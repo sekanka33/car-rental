@@ -9,7 +9,7 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 |-------|------|--------|------------|
 | 01 | Repository Inspection and Project Planning | [x] COMPLETE | — |
 | 02 | Mobile Application Foundation | [x] COMPLETE | 01 |
-| 03 | Python Backend Foundation | NOT STARTED | 01 |
+| 03 | Python Backend Foundation | [x] COMPLETE | 01 |
 | 04 | PostgreSQL and Database Foundation | NOT STARTED | 03 |
 | 05 | Authentication and Authorisation | NOT STARTED | 04 |
 | 06 | Customer Eligibility and Document Verification | NOT STARTED | 05 |
