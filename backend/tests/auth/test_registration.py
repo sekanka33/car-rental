@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations.email import InMemoryEmailSender
 from app.models import CustomerProfile, OwnerProfile, User
-from tests.auth.conftest import DEFAULT_PASSWORD, register
+from tests.api_fixtures import DEFAULT_PASSWORD, register
 from tests.conftest import requires_db
 
 pytestmark = requires_db

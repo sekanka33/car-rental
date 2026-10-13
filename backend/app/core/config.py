@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Request
@@ -51,6 +52,15 @@ class Settings(BaseSettings):
     smtp_password: SecretStr | None = None
     # Links in emails start with this URL (the mobile app's deep-link scheme).
     app_link_base_url: str = "carrental://"
+
+    # Renter eligibility and identity documents.
+    min_renter_age: int = Field(default=18, ge=18, le=30)
+    # Keyed hash for ID/licence numbers (duplicate detection without storing them).
+    # Required; changing it later breaks duplicate detection for existing records.
+    document_hash_key: SecretStr = Field(min_length=32)
+    # Private directory for uploaded documents (never served statically).
+    document_storage_dir: Path = Path("storage/private")
+    max_document_bytes: int = Field(default=10 * 1024 * 1024, ge=100 * 1024, le=25 * 1024 * 1024)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

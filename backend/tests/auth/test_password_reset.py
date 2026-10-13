@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.integrations.email import InMemoryEmailSender
 from app.models import AuditLog, UserActionToken
 from app.models.enums import UserActionTokenPurpose
-from tests.auth.conftest import Account
+from tests.api_fixtures import Account
 from tests.auth.test_email_verification import latest_token
 from tests.conftest import requires_db
 

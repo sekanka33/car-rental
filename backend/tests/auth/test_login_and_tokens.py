@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models import RefreshToken, User
-from tests.auth.conftest import Account, login, register
+from tests.api_fixtures import Account, login, register
 from tests.conftest import TEST_JWT_SECRET, requires_db
 
 pytestmark = requires_db

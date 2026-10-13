@@ -21,8 +21,12 @@ A renter may create a booking only if **all** of these are true at booking time:
 
 Additional rules:
 - A South African ID number encodes the date of birth (YYMMDD) and has a Luhn check digit. The backend may use these to flag mismatches, but a valid format **does not prove** the document is genuine.
-- Uploading a document sets its status to `PENDING`. Only an authorised reviewer can set `APPROVED`, `REJECTED`, or `REQUIRES_MORE_INFORMATION`, and each decision records the reviewer, timestamp, and reason.
+- Uploading a document sets its status to `PENDING`. Only an authorised reviewer can set `APPROVED`, `REJECTED`, or `REQUIRES_MORE_INFORMATION`, and each decision records the reviewer, timestamp, and reason. Reviewers cannot review their own documents.
 - If a document is replaced after approval, its status returns to `PENDING`.
+- The ID number must be structurally valid and its birth date must match the profile's date of birth. One SA ID number can be approved on only one account.
+- The date of birth cannot be changed while the ID is pending or approved.
+- Full ID and licence numbers are never stored; see [document-handling.md](document-handling.md).
+- Implemented in Stage 06 by `app/services/eligibility.py`. `MIN_RENTER_AGE` is configurable (default 18; OPEN-4 may raise it).
 
 ## BR-3 Vehicles
 1. New vehicles start in `DRAFT`. The owner submits them to `PENDING_APPROVAL`.

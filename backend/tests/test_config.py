@@ -13,6 +13,7 @@ def test_defaults_are_development_without_environment(monkeypatch: pytest.Monkey
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
     monkeypatch.setenv("JWT_SECRET_KEY", "x" * 40)
+    monkeypatch.setenv("DOCUMENT_HASH_KEY", "h" * 40)
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
@@ -28,6 +29,7 @@ def test_settings_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("CORS_ORIGINS", "https://admin.example.co.za, http://localhost:8081 ,")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:s3cret@db.internal:5432/rentals")
     monkeypatch.setenv("JWT_SECRET_KEY", "k" * 40)
+    monkeypatch.setenv("DOCUMENT_HASH_KEY", "h" * 40)
     monkeypatch.setenv("EMAIL_BACKEND", "smtp")
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_PASSWORD", "smtp-s3cret")

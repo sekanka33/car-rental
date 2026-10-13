@@ -7,6 +7,7 @@ If TEST_DATABASE_URL is not set, database tests are skipped (reported by `pytest
 """
 
 import os
+import tempfile
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -28,12 +29,15 @@ TEST_DATABASE_URL = _TestDatabaseSettings().test_database_url
 if TEST_DATABASE_URL and not TEST_DATABASE_URL.rsplit("/", 1)[-1].endswith("_test"):
     raise RuntimeError("TEST_DATABASE_URL must name a database ending in '_test' (it is wiped).")
 
-# Signing key used only by the test suite.
+# Keys used only by the test suite.
 TEST_JWT_SECRET = "test-only-signing-key-0123456789abcdefghijklmnopqrstuvwxyz"
+TEST_DOCUMENT_HASH_KEY = "test-only-document-hash-key-0123456789abcdefghij"
+TEST_DOCUMENT_DIR = Path(tempfile.gettempdir()) / "car-rental-test-documents"
 
 # app.main builds a module-level app at import time; give it required settings first.
 os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL or UNREACHABLE_DATABASE_URL)
 os.environ.setdefault("JWT_SECRET_KEY", TEST_JWT_SECRET)
+os.environ.setdefault("DOCUMENT_HASH_KEY", TEST_DOCUMENT_HASH_KEY)
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -54,6 +58,8 @@ def make_settings(**overrides: object) -> Settings:
         "app_env": Environment.TEST,
         "database_url": TEST_DATABASE_URL or UNREACHABLE_DATABASE_URL,
         "jwt_secret_key": TEST_JWT_SECRET,
+        "document_hash_key": TEST_DOCUMENT_HASH_KEY,
+        "document_storage_dir": TEST_DOCUMENT_DIR,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

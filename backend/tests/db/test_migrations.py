@@ -23,6 +23,8 @@ EXPECTED_TABLES = {
     "audit_logs",
     "refresh_tokens",
     "user_action_tokens",
+    "verification_submissions",
+    "verification_files",
 }
 
 pytestmark = requires_db

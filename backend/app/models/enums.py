@@ -91,3 +91,21 @@ class DeliveryStatus(StrEnum):
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
+
+
+class DocumentType(StrEnum):
+    SA_ID = "SA_ID"
+    DRIVING_LICENCE = "DRIVING_LICENCE"
+
+
+class DocumentSide(StrEnum):
+    FRONT = "FRONT"
+    BACK = "BACK"
+
+
+class SubmissionStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    REQUIRES_MORE_INFORMATION = "REQUIRES_MORE_INFORMATION"
+    SUPERSEDED = "SUPERSEDED"  # replaced by a newer submission of the same type

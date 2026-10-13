@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, User
-from tests.auth.conftest import Account, login
+from tests.api_fixtures import Account, login
 from tests.conftest import requires_db
 
 pytestmark = requires_db

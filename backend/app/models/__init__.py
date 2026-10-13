@@ -7,6 +7,7 @@ from app.models.delivery import Delivery
 from app.models.payment import Payment
 from app.models.user import CustomerProfile, OwnerProfile, Role, User, UserRole
 from app.models.vehicle import Vehicle, VehicleImage, VehiclePrice
+from app.models.verification import VerificationFile, VerificationSubmission
 
 __all__ = [
     "AuditLog",
@@ -23,4 +24,6 @@ __all__ = [
     "Vehicle",
     "VehicleImage",
     "VehiclePrice",
+    "VerificationFile",
+    "VerificationSubmission",
 ]

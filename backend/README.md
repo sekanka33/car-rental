@@ -124,6 +124,30 @@ How it works:
 - **Request bodies reject unknown fields**, so a client cannot send `role`, `roles`, `status` or similar.
 - **Login errors are generic** ("Invalid email or password"), and unknown emails take the same hashing time as real ones.
 
+### Renter eligibility and document verification
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET /api/v1/customers/me/profile` | `RENTER` | Date of birth, ID and licence verification status, licence expiry, minimum age |
+| `PUT /api/v1/customers/me/profile/date-of-birth` | `RENTER` | Set date of birth (must be ≥ `MIN_RENTER_AGE`; locked while the ID is pending or approved) |
+| `POST /api/v1/customers/me/documents` | `RENTER` | Multipart upload: `document_type` (`SA_ID`/`DRIVING_LICENCE`), `document_number`, `front` file, optional `back`, and `licence_expiry_date`/`licence_codes` for licences |
+| `GET /api/v1/customers/me/documents` | `RENTER` | Own submissions with status and reviewer notes (numbers masked) |
+| `GET /api/v1/customers/me/documents/{id}/files/{file_id}` | `RENTER` (owner only) | Download own file |
+| `GET /api/v1/customers/me/eligibility?start_at=&end_at=` | `RENTER` | Whether the renter may book for that period, with every failing reason |
+| `GET /api/v1/admin/verifications?status=PENDING` | `ADMIN` | Review queue (oldest first) |
+| `GET /api/v1/admin/verifications/{id}` | `ADMIN` | Submission detail with submitter and date of birth |
+| `GET /api/v1/admin/verifications/{id}/files/{file_id}` | `ADMIN` | View a document file (**audited**) |
+| `POST /api/v1/admin/verifications/{id}/decision` | `ADMIN` | `APPROVED` / `REJECTED` / `REQUIRES_MORE_INFORMATION` (note required unless approving) |
+
+Eligibility reasons: `NOT_A_RENTER`, `ACCOUNT_NOT_ACTIVE`, `EMAIL_NOT_VERIFIED`,
+`PROFILE_MISSING`, `DATE_OF_BIRTH_MISSING`, `UNDER_MINIMUM_AGE`, `ID_NOT_APPROVED`,
+`LICENCE_NOT_APPROVED`, `LICENCE_EXPIRES_BEFORE_RENTAL_ENDS`. Age is calculated on the
+rental start date and licence validity against the end date, in South African time.
+
+Full ID and licence numbers are never stored. See
+[docs/document-handling.md](../docs/document-handling.md) for what is stored, access
+rules, logging rules and retention.
+
 ### Creating an administrator
 
 Administrators cannot register through the API. An operator with database access runs:
@@ -178,6 +202,10 @@ See [.env.example](.env.example).
 | `EMAIL_FROM` | `CarHire SA <no-reply@example.com>` | Sender address |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` | — / `587` / — / — | Required when `EMAIL_BACKEND=smtp` |
 | `APP_LINK_BASE_URL` | `carrental://` | Prefix of links in emails (mobile deep-link scheme) |
+| `MIN_RENTER_AGE` | `18` | Minimum renter age (18–30; raise if insurers require it) |
+| `DOCUMENT_HASH_KEY` | **required** | At least 32 characters; keys the HMAC of ID/licence numbers. Do not rotate casually |
+| `DOCUMENT_STORAGE_DIR` | `storage/private` | Private directory for uploaded documents (relative to `backend/`) |
+| `MAX_DOCUMENT_BYTES` | `10485760` | Maximum size per uploaded file (100 KB–25 MB) |
 
 ## Structure
 
@@ -188,19 +216,20 @@ app/
 │   ├── config.py      # Settings (pydantic-settings) and dependencies
 │   ├── errors.py      # AppError (+ NotFound/Authentication/PermissionDenied) and handlers
 │   ├── security.py    # Argon2id hashing, JWT access tokens, random token helpers
+│   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
 │   └── logging.py
 ├── cli.py             # Operator commands (create-admin)
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, admin_users, health
+│   └── routes/        # auth, users, owners, customers, admin_users, admin_verifications, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
-├── integrations/      # External services behind interfaces (email: smtp / console / in-memory)
+├── integrations/      # External services behind interfaces (email, private document storage)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts (suspension, admin creation), audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

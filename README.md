@@ -4,11 +4,11 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–05 complete. The mobile app foundation runs with
+> **Current state:** Stages 01–06 complete. The mobile app foundation runs with
 > **prototype sample data** (not yet connected to the API). The FastAPI backend runs
-> on PostgreSQL with authentication, role-based access control, email verification,
-> password reset, and account suspension. Vehicle, booking, and payment features are
-> not built yet. Commands for
+> on PostgreSQL with authentication, role-based access control, and renter
+> eligibility (date of birth, private ID and licence uploads, administrator review,
+> eligibility checks). Vehicle, booking, and payment features are not built yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -69,6 +69,7 @@ car-rental/
 ├── .gitignore              # Ignores .env files, venvs, node_modules, build output, uploads
 ├── docs/
 │   ├── requirements.md     # Functional and non-functional requirements, open decisions
+│   ├── document-handling.md # Identity documents: storage, access, logging, retention
 │   ├── business-rules.md   # Rules enforced by the backend
 │   ├── architecture.md     # Components, layering, data model plan, providers
 │   └── development-roadmap.md
@@ -103,7 +104,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 03 | Python Backend Foundation | [x] COMPLETE | pytest 19/19, ruff, live server checks, clean-venv install |
 | 04 | PostgreSQL and Database Foundation | [x] COMPLETE | pytest 62/62 on PostgreSQL 16, migration round-trip, alembic check, concurrency test |
 | 05 | Authentication and Authorisation | [x] COMPLETE | pytest 129/129, 6 mutation checks, live E2E flow, fresh-venv install |
-| 06 | Customer Eligibility and Document Verification | NOT STARTED | Not tested |
+| 06 | Customer Eligibility and Document Verification | [x] COMPLETE | pytest 179/179, 8 mutation checks, live upload/review E2E, fresh-venv install |
 | 07 | Owner Profiles and Vehicle Registration | NOT STARTED | Not tested |
 | 08 | Administrator Pricing Management | NOT STARTED | Not tested |
 | 09 | Customer Marketplace | NOT STARTED | Not tested |
@@ -355,6 +356,92 @@ Outstanding limitations:
 Next stage:
 - Stage 06: Customer Eligibility and Document Verification.
 
+### Stage 06: Customer Eligibility and Document Verification
+
+Status: COMPLETE (2026-10-13)
+
+Defaults chosen for open decisions (changeable later): minimum age **18** (configurable through `MIN_RENTER_AGE`, OPEN-4), **SA ID only** (OPEN-5), **manual administrator review** (OPEN-9).
+
+Implemented:
+- **Date of birth:** must be at least the minimum age (calculated in South African time). It is locked while the ID is pending or approved.
+- **Document submission** (multipart, `RENTER` only) for `SA_ID` and `DRIVING_LICENCE`, with a front and optional back file:
+  - File type is detected from the content (JPEG, PNG, PDF); client names and types are ignored.
+  - Size limit, with 413 for larger files.
+  - SHA-256 is recorded, and files are cleaned up if the submission fails.
+- **SA ID checks:** 13 digits, Luhn check digit, citizenship digit, and birth date matching the profile.
+- **Full ID and licence numbers are never stored.** Only a keyed HMAC and the last 3 digits are kept.
+- **One SA ID per approved account:** a check at submission plus a partial unique index, which also catches approvals made at the same time.
+- **Private storage:** `DocumentStorage` interface; `LocalDocumentStorage` (random UUID keys, `0700` directories, `0600` files, path-traversal safe) and an in-memory version for tests.
+- **Statuses:** `PENDING`, `APPROVED`, `REJECTED`, `REQUIRES_MORE_INFORMATION`, and `SUPERSEDED` (a newer submission replaced a pending one). The profile status mirrors the latest submission.
+- **Administrator review:**
+  - Queue, detail, and file viewer (**every view audited**).
+  - Decision endpoint: a note is required unless approving; no self-review; only pending submissions; the reviewer can confirm the licence expiry; expired licences cannot be approved.
+  - Decisions are recorded on the submission and in `audit_logs`.
+- **Customer feedback:** own submissions with status and reviewer notes (numbers masked), plus download of own files.
+- **`GET /customers/me/eligibility`:** checks from database records only, with every failing reason listed: role, account status, verified email, date of birth, minimum age at rental start, ID approved, licence approved, licence valid through the rental end.
+- **Migration `b0aa20505e0f`:** `verification_submissions` and `verification_files`.
+- **Documentation:** [docs/document-handling.md](docs/document-handling.md) covers the data inventory, verification rules, file handling, access, logging, keys, and proposed retention.
+
+Files changed:
+- New:
+  - `backend/app/core/identity.py`, `backend/app/integrations/storage.py`
+  - Models and schemas: `backend/app/models/verification.py`, `backend/app/schemas/verification.py`
+  - Services: `backend/app/services/{verification,eligibility}.py`
+  - Routes: `backend/app/api/routes/{customers,admin_verifications}.py`
+  - Migration: `backend/migrations/versions/2026_10_13_1202-b0aa20505e0f_add_identity_and_licence_verification.py`
+  - Tests: `backend/tests/api_fixtures.py` (shared fixtures moved from `tests/auth/conftest.py`), `backend/tests/verification/` (helpers plus 3 test modules)
+  - `docs/document-handling.md`
+- Modified:
+  - Backend: `app/core/config.py`, `app/main.py`, `app/api/{deps,router}.py`, `app/models/{__init__,enums}.py`
+  - Config: `requirements.txt` (`python-multipart`), `.env.example`
+  - Tests: `tests/conftest.py`, `tests/auth/conftest.py`, `tests/auth/*` (imports), `tests/test_config.py`, `tests/db/test_migrations.py`
+  - Docs: `backend/README.md`, `docs/business-rules.md`, `docs/requirements.md`, `docs/development-roadmap.md`, `README.md`
+- Local only (git-ignored): `backend/.env` now holds a generated `DOCUMENT_HASH_KEY`; `backend/storage/private/`.
+
+Verification:
+- `pytest -ra`: **179 passed, 0 skipped, 0 failed** (50 new). Covered:
+  - ID number rules and century inference; age edge cases (18th birthday today, leap day); HMAC keying and normalisation.
+  - Storage permissions and path-traversal rejection.
+  - Date-of-birth rules and lock; renter-only access.
+  - Submission stored privately, with the **full ID number absent from every table and from DEBUG logs**.
+  - Invalid ID and date-of-birth mismatch; a disguised executable, HTML, and an empty file rejected; 413 for oversized files; front side required; resubmission supersedes.
+  - Licence submission and expiry.
+  - Review queue admin-only; customers cannot change their status (no endpoint, and extra fields rejected).
+  - Approve, reject (note required), more-info then resubmit; reviewer-confirmed licence expiry; expired licence not approvable; no self-review.
+  - Duplicate ID blocked at submission **and** at approval time (database index → 409, not 500).
+  - File access: owner 200 with `no-store`/`nosniff`; other renter 404; owner role 403; anonymous 401; admin view audited.
+  - Eligibility: missing items listed, unreviewed uploads not enough, fully verified eligible, licence must outlast the rental, configurable minimum age, inactive account, owner 403, period validation.
+  - The anonymous-access sweep covers the 10 new endpoints.
+- Mutation checks: each of these changes made tests **fail**:
+  - removing the owner check on file download
+  - removing the self-review check
+  - removing content sniffing
+  - removing the duplicate-ID pre-check
+  - removing the ID and date-of-birth match
+  - removing the admin file-view audit
+  - removing the ID-approval check from eligibility
+  - removing the email-verified check from eligibility
+- Live end-to-end run (temporary database and storage directory, real uvicorn, `curl` multipart uploads, then all removed):
+  - Under-18 date of birth → 422; disguised `.jpg` executable rejected.
+  - ID JPEG and licence PDF uploaded as `PENDING` with the masked number.
+  - Admin queue; admin file view returned identical bytes; renter decision attempt → 403.
+  - Both approved, then eligibility `{"eligible": true}`. Audit: `admin.created`, 2× `verification.document_viewed`, 2× `verification.approved`.
+  - Files on disk mode `600` in `700` directories. **The full ID number appeared 0 times in a full database dump and 0 times in the server log.**
+- `ruff check .` and `ruff format --check .` passed. `alembic check`: no drift. `pip check` clean. Fresh venv: 179 passed.
+- Bug found and fixed: approving the same ID on a second account raised the unique-index error during an autoflush, before the guarded commit, giving a 500. The decision is now flushed inside the guarded block and returns 409. A dedicated test covers it.
+
+Outstanding limitations:
+- **Local document storage is not encrypted at rest.** Production needs an encrypted private object store (Stage 18).
+- Retention periods in `docs/document-handling.md` are **proposals** that need a POPIA or legal advisor. Automatic purging of old files is not implemented yet.
+- No external KYC or face-match: verification is manual review of the images (OPEN-9). Passports and foreign licences are not supported (OPEN-5). Licence-duration rules are not implemented (OPEN-4).
+- Images are checked by file signature only. Pixel content is not decoded or re-encoded (e.g. to strip EXIF), and there is no malware scanning. Consider both before launch.
+- Requests are not size-capped before multipart parsing. A reverse-proxy body limit is needed in production (Stage 18).
+- Data-only `pg_dump` warns about the self-referencing `refresh_tokens.replaced_by_id` foreign key. Use full dumps for backups (Stage 18).
+- The mobile app does not yet have the upload or verification screens (Stage 14, after it connects to the API in Stage 09).
+
+Next stage:
+- Stage 07: Owner Profiles and Vehicle Registration.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -404,7 +491,7 @@ python -m app.cli create-admin --email you@example.com --full-name "Your Name"  
 - Each application will provide a `.env.example` with placeholder values. Copy it to `.env` and fill in local values.
 - `.env` files are git-ignored. Never commit real secrets (JWT keys, database passwords, payment keys, Maps keys).
 - **Root (Docker Compose):** `.env.example` lists `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, and `POSTGRES_PORT`. Use a random password, e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
-- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, `DATABASE_ECHO`, `JWT_SECRET_KEY` (required; generate a random 64-byte value), token lifetimes, `EMAIL_BACKEND` (`console` or `smtp`), `EMAIL_FROM`, `SMTP_*`, and `APP_LINK_BASE_URL`. See [backend/README.md](backend/README.md#configuration).
+- **Backend:** `backend/.env.example` lists `APP_ENV`, `APP_NAME`, `LOG_LEVEL`, `CORS_ORIGINS`, `DATABASE_URL` (required), `TEST_DATABASE_URL`, `DATABASE_ECHO`, `JWT_SECRET_KEY` (required; generate a random 64-byte value), token lifetimes, `EMAIL_BACKEND` (`console` or `smtp`), `EMAIL_FROM`, `SMTP_*`, `APP_LINK_BASE_URL`, `MIN_RENTER_AGE`, `DOCUMENT_HASH_KEY` (required; generate once and keep), `DOCUMENT_STORAGE_DIR`, and `MAX_DOCUMENT_BYTES`. See [backend/README.md](backend/README.md#configuration).
 - Production refuses to start with `EMAIL_BACKEND=console`, and `JWT_SECRET_KEY` must be at least 32 characters.
 - **Mobile:** no environment variables yet. The API URL is added in Stage 09.
 
@@ -495,8 +582,10 @@ an access token from `POST /api/v1/auth/login`.
 
 Current endpoints: health; auth (register, login, refresh, logout, logout-all,
 verify-email, resend, password-reset request and confirm); `GET /users/me`;
-owner `GET /owners/me/profile`; admin `GET /admin/users` and
-`POST /admin/users/{id}/suspend|reactivate`. The full table with access rules is in
+owner `GET /owners/me/profile`; renter profile, date of birth, document upload and
+list, own-file download, and eligibility (`/customers/me/...`); admin users
+(list, suspend, reactivate) and verifications (queue, detail, audited file view,
+decision). The full tables with access rules are in
 [backend/README.md](backend/README.md#authentication-and-authorisation). Every
 error uses the envelope `{"error": {"code", "message", "details"?}}`.
 
@@ -513,7 +602,10 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - Secrets live only in environment variables. HTTPS is required in production.
 - No real financial transactions or production deployments happen without explicit owner approval.
 
-See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9).
+- Full SA ID and licence numbers are never stored, only a keyed HMAC and the last 3 digits. Document files live in private storage with server-generated names, are type-checked by content, can be viewed only by their owner and administrators, and **every administrator view is audited**.
+
+See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
+[docs/document-handling.md](docs/document-handling.md).
 
 ## 18. Known Issues
 
@@ -522,21 +614,21 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9).
 - Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
+- Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
 - Mobile `npm audit`: 36 advisories in Expo build tooling (not app runtime). Deferred to Stage 17; `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–05 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with the core schema plus authentication and authorisation (registration, login, token rotation, RBAC, email verification, password reset, suspension, CLI admin creation), and 129 passing tests. Stage 06 has not started.
+Stages 01–06 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, plus renter eligibility (date of birth, private document uploads, administrator review with audit, eligibility checks), and 179 passing tests. Stage 07 has not started.
 
 ## 20. Next Stage
 
-**Stage 06: Customer Eligibility and Document Verification.** Date-of-birth
-capture with the 18+ rule; secure private upload of the SA ID document and the
-driving licence; verification status managed by the backend
-(NOT_SUBMITTED / PENDING / APPROVED / REJECTED / REQUIRES_MORE_INFORMATION);
-administrator review workflow with recorded decisions; document access controls;
-and backend eligibility checks. Open decisions that affect this stage: OPEN-4
-(insurer age and licence-duration rules), OPEN-5 (foreign nationals), OPEN-9
-(manual review or an external KYC service). Waiting for owner approval to begin.
+**Stage 07: Owner Profiles and Vehicle Registration.** Owner profile management;
+vehicle registration (details, multiple photographs, required vehicle documents
+such as licence disc, roadworthy and insurance); vehicle statuses (DRAFT,
+PENDING_APPROVAL, APPROVED, REJECTED, SUSPENDED, UNAVAILABLE); administrator
+approval and rejection; availability management; owners viewing their own
+vehicles; unapproved vehicles kept out of the marketplace. Waiting for owner
+approval to begin.

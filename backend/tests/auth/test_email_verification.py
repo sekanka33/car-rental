@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.integrations.email import InMemoryEmailSender
 from app.models import UserActionToken
-from tests.auth.conftest import Account
+from tests.api_fixtures import Account
 from tests.conftest import requires_db
 
 pytestmark = requires_db

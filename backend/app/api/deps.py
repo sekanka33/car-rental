@@ -12,6 +12,7 @@ from app.core.errors import AuthenticationError, PermissionDeniedError
 from app.core.security import InvalidTokenError, decode_access_token
 from app.db.session import get_db
 from app.integrations.email import EmailSender
+from app.integrations.storage import DocumentStorage
 from app.models import User
 from app.models.enums import RoleName
 from app.repositories import users as repo
@@ -28,6 +29,13 @@ def get_email_sender(request: Request) -> EmailSender:
 
 
 EmailSenderDep = Annotated[EmailSender, Depends(get_email_sender)]
+
+
+def get_document_storage(request: Request) -> DocumentStorage:
+    return request.app.state.document_storage
+
+
+DocumentStorageDep = Annotated[DocumentStorage, Depends(get_document_storage)]
 
 
 def get_current_user(
@@ -71,3 +79,4 @@ def require_roles(*allowed: RoleName) -> Callable[[User], User]:
 
 AdminUser = Annotated[User, Depends(require_roles(RoleName.ADMIN))]
 OwnerUser = Annotated[User, Depends(require_roles(RoleName.OWNER))]
+RenterUser = Annotated[User, Depends(require_roles(RoleName.RENTER))]
