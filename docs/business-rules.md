@@ -32,10 +32,14 @@ Additional rules:
 1. New vehicles start in `DRAFT`. The owner submits them to `PENDING_APPROVAL`.
 2. Only an administrator can move a vehicle to `APPROVED`, `REJECTED`, or `SUSPENDED`.
 3. The owner can switch an approved vehicle between `APPROVED` and `UNAVAILABLE`. This does not cancel existing bookings; conflicts are flagged to an administrator.
-4. A vehicle needs an active official price before it can be `APPROVED`.
-5. Only `APPROVED` vehicles appear in public listings or accept new bookings.
-6. Material edits to an approved vehicle (such as registration, VIN, or documents) send it back to `PENDING_APPROVAL`.
-7. Registration numbers and VINs are unique across active vehicles.
+4. Approval and official pricing are separate administrator actions. A vehicle is **publicly listed and bookable only when it is `APPROVED` and has an active official price** (price rules: Stage 08; enforced in listings: Stage 09). *(Revised in Stage 07: the original rule "price before approval" would have made approval impossible before Stage 08.)*
+5. Only `APPROVED` vehicles appear in public listings or accept new bookings, and only while the owner's account is active and the current licence disc and insurance are unexpired (`publicly_listed_vehicles()` in `app/services/vehicles.py`).
+6. Material edits to an approved or unavailable vehicle send it back to `PENDING_APPROVAL`: make, model, year, registration number, VIN, transmission, fuel type, seats, or a new registration certificate. Cosmetic edits (description, colour, location) and renewals of the licence disc, insurance or roadworthy certificate do **not** need re-approval. An expired licence disc or insurance removes the vehicle from listings until renewed.
+7. Registration numbers and VINs are unique across all vehicles. Registration numbers are stored upper-case without spaces or hyphens.
+8. To submit for review, the owner needs a verified email, at least 3 photos, and a registration certificate, a licence disc and insurance (the last two with future expiry dates). Approval re-checks the documents and requires the owner's account to be active.
+9. Owners can edit only in `DRAFT`, `REJECTED`, `APPROVED` or `UNAVAILABLE`. A vehicle under review must be withdrawn first, and a suspended vehicle cannot be edited. Only `DRAFT` and `REJECTED` vehicles can be deleted.
+10. Owners can block date ranges. A block may not overlap an existing reserving booking.
+11. Administrators cannot review their own vehicles. Every administrator view of a vehicle document is audited.
 
 ## BR-4 Pricing
 1. Only administrators create or change official prices. Owner and renter requests that include price fields are rejected or ignored.

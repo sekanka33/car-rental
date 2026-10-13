@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, SmallInteger, String, Text, func
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, SmallInteger, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import (
@@ -13,7 +13,7 @@ from app.db.base import (
     UUIDPrimaryKeyMixin,
     str_enum,
 )
-from app.models.enums import FuelType, Transmission, VehicleStatus
+from app.models.enums import FuelType, Transmission, VehicleDocumentType, VehicleStatus
 from app.models.user import OwnerProfile
 
 
@@ -55,6 +55,7 @@ class Vehicle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=VehicleStatus.DRAFT,
         server_default="DRAFT",
     )
+    submitted_at: Mapped[datetime | None]
     approved_at: Mapped[datetime | None]
     approved_by_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
@@ -68,6 +69,16 @@ class Vehicle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     prices: Mapped[list["VehiclePrice"]] = relationship(
         back_populates="vehicle", order_by="VehiclePrice.effective_from.desc()"
     )
+    documents: Mapped[list["VehicleDocument"]] = relationship(
+        back_populates="vehicle",
+        order_by="VehicleDocument.created_at.desc()",
+        cascade="all, delete-orphan",
+    )
+    availability_blocks: Mapped[list["VehicleAvailabilityBlock"]] = relationship(
+        back_populates="vehicle",
+        order_by="VehicleAvailabilityBlock.start_at",
+        cascade="all, delete-orphan",
+    )
 
 
 class VehicleImage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -80,14 +91,70 @@ class VehicleImage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         CheckConstraint(
             "content_type IN ('image/jpeg', 'image/png', 'image/webp')", name="content_type_allowed"
         ),
+        CheckConstraint("size_bytes > 0", name="size_positive"),
     )
 
     vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id", ondelete="CASCADE"))
     storage_key: Mapped[str] = mapped_column(String(500), unique=True)
     content_type: Mapped[str] = mapped_column(String(50))
     sort_order: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0")
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
 
     vehicle: Mapped[Vehicle] = relationship(back_populates="images")
+
+
+class VehicleDocument(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """A private vehicle document (registration, licence disc, insurance, roadworthy).
+
+    Documents are append-only: a renewal is a new row, and the newest row of each type is
+    the current one. Files live in private storage under storage_key.
+    """
+
+    __tablename__ = "vehicle_documents"
+    __table_args__ = (
+        Index("ix_vehicle_documents_vehicle_type", "vehicle_id", "document_type", "created_at"),
+        CheckConstraint(
+            "content_type IN ('image/jpeg', 'image/png', 'application/pdf')",
+            name="content_type_allowed",
+        ),
+        CheckConstraint("size_bytes > 0", name="size_positive"),
+        CheckConstraint(
+            "document_type NOT IN ('LICENCE_DISC', 'INSURANCE') OR expiry_date IS NOT NULL",
+            name="expiring_documents_have_expiry",
+        ),
+    )
+
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id", ondelete="CASCADE"))
+    document_type: Mapped[VehicleDocumentType] = mapped_column(
+        str_enum(VehicleDocumentType, "vehicle_document_type")
+    )
+    expiry_date: Mapped[date | None]
+    storage_key: Mapped[str] = mapped_column(String(200), unique=True)
+    content_type: Mapped[str] = mapped_column(String(50))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    uploaded_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="documents")
+
+
+class VehicleAvailabilityBlock(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """A period the owner has blocked (vehicle not available to rent)."""
+
+    __tablename__ = "vehicle_availability_blocks"
+    __table_args__ = (
+        CheckConstraint("end_at > start_at", name="period_valid"),
+        Index("ix_vehicle_availability_blocks_vehicle_start", "vehicle_id", "start_at"),
+    )
+
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id", ondelete="CASCADE"))
+    start_at: Mapped[datetime]
+    end_at: Mapped[datetime]
+    reason: Mapped[str | None] = mapped_column(String(200))
+    created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+    vehicle: Mapped[Vehicle] = relationship(back_populates="availability_blocks")
 
 
 class VehiclePrice(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

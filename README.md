@@ -4,11 +4,11 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–06 complete. The mobile app foundation runs with
+> **Current state:** Stages 01–07 complete. The mobile app foundation runs with
 > **prototype sample data** (not yet connected to the API). The FastAPI backend runs
-> on PostgreSQL with authentication, role-based access control, and renter
-> eligibility (date of birth, private ID and licence uploads, administrator review,
-> eligibility checks). Vehicle, booking, and payment features are not built yet. Commands for
+> on PostgreSQL with authentication, role-based access control, renter eligibility,
+> and owner vehicle registration with administrator approval. Official pricing,
+> the public marketplace, bookings, and payments are not built yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -105,7 +105,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 04 | PostgreSQL and Database Foundation | [x] COMPLETE | pytest 62/62 on PostgreSQL 16, migration round-trip, alembic check, concurrency test |
 | 05 | Authentication and Authorisation | [x] COMPLETE | pytest 129/129, 6 mutation checks, live E2E flow, fresh-venv install |
 | 06 | Customer Eligibility and Document Verification | [x] COMPLETE | pytest 179/179, 8 mutation checks, live upload/review E2E, fresh-venv install |
-| 07 | Owner Profiles and Vehicle Registration | NOT STARTED | Not tested |
+| 07 | Owner Profiles and Vehicle Registration | [x] COMPLETE | pytest 219/219, 9 mutation checks, live owner→admin E2E |
 | 08 | Administrator Pricing Management | NOT STARTED | Not tested |
 | 09 | Customer Marketplace | NOT STARTED | Not tested |
 | 10 | Booking and Availability | NOT STARTED | Not tested |
@@ -442,6 +442,95 @@ Outstanding limitations:
 Next stage:
 - Stage 07: Owner Profiles and Vehicle Registration.
 
+### Stage 07: Owner Profiles and Vehicle Registration
+
+Status: COMPLETE (2026-10-13)
+
+Business-rule revisions (recorded in [docs/business-rules.md](docs/business-rules.md) BR-3):
+- **BR-3.4:** approval and official pricing are separate administrator actions. A vehicle is publicly listed only when it is both approved and priced. The original "price before approval" rule would have blocked approval until Stage 08.
+- **BR-3.6:** only identity-changing edits trigger re-review (make, model, year, registration, VIN, transmission, fuel, seats, or a new registration certificate). Renewing the licence disc or insurance does not; expired documents hide the vehicle until renewed.
+
+Implemented:
+- **Owner profile:** update business name, city and province. The province must be one of the 9 SA provinces.
+- **Vehicle registration** (`OWNER` only), starting as `DRAFT`:
+  - Registration number normalised (upper case, no spaces or hyphens); VIN validated (17 characters, no I/O/Q).
+  - Year from 1981 to next year; seats 2–16; province validated.
+  - Price, status, ownership and approval fields are rejected.
+  - Registration and VIN are unique (409).
+- **Photos:** JPEG, PNG or WebP detected by content; at most 12; private storage; view and delete.
+- **Vehicle documents:** `REGISTRATION_CERTIFICATE`, `LICENCE_DISC` (expiry), `INSURANCE` (expiry), `ROADWORTHY_CERTIFICATE`. Append-only: a renewal adds a newer current document. Compliance reports missing or expired documents.
+- **Owner workflow:**
+  - Submit for review, which requires a verified email, 3 or more photos, and valid required documents. The error lists exactly what is missing.
+  - Withdraw from review; no edits while under review.
+  - Material edits on approved vehicles go back to review (audited).
+  - Delete `DRAFT` or `REJECTED` vehicles together with their files.
+- **Availability:**
+  - The owner can list or unlist an approved vehicle (`APPROVED` ⇄ `UNAVAILABLE`, audited).
+  - Blocked date ranges (timezone-aware, future, not overlapping an existing reserving booking).
+- **Administrator review:**
+  - Queue (oldest submission first) with owner details and compliance.
+  - Photo viewer, and document viewer (**audited**).
+  - Approve (re-checks documents and that the owner is active; never your own vehicle) and reject (reason shown to the owner).
+- **`publicly_listed_vehicles()`:** the single query the marketplace will use. It returns only `APPROVED` vehicles of active owners whose current licence disc and insurance have not expired.
+- **Shared upload checks** (`app/services/uploads.py`), now also used by identity verification.
+- **Migration `fcc33d6d54bd`:** `vehicle_documents`, `vehicle_availability_blocks`, photo size and checksum columns, `vehicles.submitted_at`. The CHECK constraint on the existing `vehicle_images` table was added by hand, because Alembic does not detect new CHECKs on existing tables.
+
+Files changed:
+- New:
+  - `backend/app/services/{vehicles,uploads}.py`, `backend/app/schemas/vehicles.py`
+  - Routes: `backend/app/api/routes/{owner_vehicles,admin_vehicles}.py`
+  - Migration: `backend/migrations/versions/2026_10_13_1233-fcc33d6d54bd_add_vehicle_documents_availability_and_.py`
+  - Tests: `backend/tests/vehicles/` (helpers plus 2 test modules)
+- Modified:
+  - Backend: `app/models/{vehicle,enums,__init__}.py`, `app/services/verification.py` (uses shared upload checks), `app/api/routes/owners.py`, `app/api/router.py`
+  - Tests: `tests/db/test_migrations.py`
+  - Docs: `backend/README.md`, `docs/business-rules.md`, `docs/development-roadmap.md`, `README.md`
+
+Verification:
+- `pytest -ra`: **219 passed, 0 skipped, 0 failed** (40 new). Covered:
+  - Owner profile and province validation.
+  - Draft registration and normalisation; owners cannot send price, status, owner or approval fields.
+  - Invalid VIN, year, seats, province, registration and transmission.
+  - Registration and VIN uniqueness across owners; renters 403; anonymous 401.
+  - Owners cannot see or change other owners' vehicles (404).
+  - Photo types by content (PDF, executable, empty rejected); photo limit.
+  - Document expiry rules and renewals.
+  - Submission readiness (every missing item reported); expired document blocks submission; no edits under review; withdraw.
+  - Delete removes stored files; availability blocks (validation, overlap with a booking → 409).
+  - Admin-only queue; approve with audit; reject with reason, then resubmit; no self-approval.
+  - No approval with expired documents or an inactive owner; document views audited (photos not).
+  - Material and cosmetic edits; registration certificate vs licence-disc renewal; list and unlist.
+  - **Public visibility:** draft, pending, unavailable, expired newest insurance and suspended owner are all hidden; approved and compliant is shown.
+- Mutation checks: each of these changes made tests **fail**:
+  - ownership check
+  - self-approval check
+  - submission readiness
+  - approval compliance
+  - material-change re-review
+  - public status filter
+  - public owner-active filter
+  - block/booking overlap check
+  - unknown-field rejection
+- Live end-to-end run (temporary database and storage, real uvicorn, `curl` multipart uploads, then removed):
+  - Early submit listed the 4 missing items; 3 photos and 3 documents uploaded; submitted.
+  - Admin queue; document view admin 200, renter 403, owner via the admin route 403; owner approving 403.
+  - Approve → publicly listed 1; unlist 0, relist 1; date block 201.
+  - Seat change → `PENDING_APPROVAL` → listed 0; re-approve → 1.
+  - Audit trail of 8 entries in the right order; 6 stored files, all mode 600.
+  - My first run failed only because the test script extracted the wrong email line; the app correctly refused submission from an unverified owner.
+- `ruff check .` and `ruff format --check .` passed. `alembic check`: no drift. No new dependencies this stage.
+
+Outstanding limitations:
+- **No official prices yet** (Stage 08), so nothing can be listed in a marketplace. Administrator suspension of vehicles is Stage 08.
+- No public marketplace endpoints or public photo URLs yet (Stage 09). Photos are served only to the owner and administrators.
+- No photo reordering or "main photo" choice (photos keep upload order).
+- Owner payout details are not collected (Stage 11).
+- Unlisting a vehicle does not notify renters with existing bookings, and conflicts are not yet flagged to administrators (bookings exist from Stage 10; notifications in Stage 16).
+- The same storage caveats as Stage 06 apply: local disk is unencrypted, there is no image re-encoding or malware scan, and a proxy body limit is needed in production.
+
+Next stage:
+- Stage 08: Administrator Pricing Management.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -582,7 +671,9 @@ an access token from `POST /api/v1/auth/login`.
 
 Current endpoints: health; auth (register, login, refresh, logout, logout-all,
 verify-email, resend, password-reset request and confirm); `GET /users/me`;
-owner `GET /owners/me/profile`; renter profile, date of birth, document upload and
+owner profile and vehicles (`/owners/me/...`: registration, photos, documents,
+submit and withdraw, listing, availability blocks); admin vehicle review
+(`/admin/vehicles`: queue, detail, audited document view, approve, reject); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -614,6 +705,7 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
+- No official pricing yet, so approved vehicles cannot be listed publicly until Stage 08 and 09.
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
@@ -621,14 +713,14 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 
 ## 19. Current Development Status
 
-Stages 01–06 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, plus renter eligibility (date of birth, private document uploads, administrator review with audit, eligibility checks), and 179 passing tests. Stage 07 has not started.
+Stages 01–07 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, renter eligibility, and owner vehicle registration (photos, documents, review workflow, availability), and 219 passing tests. Stage 08 has not started.
 
 ## 20. Next Stage
 
-**Stage 07: Owner Profiles and Vehicle Registration.** Owner profile management;
-vehicle registration (details, multiple photographs, required vehicle documents
-such as licence disc, roadworthy and insurance); vehicle statuses (DRAFT,
-PENDING_APPROVAL, APPROVED, REJECTED, SUSPENDED, UNAVAILABLE); administrator
-approval and rejection; availability management; owners viewing their own
-vehicles; unapproved vehicles kept out of the marketplace. Waiting for owner
-approval to begin.
+**Stage 08: Administrator Pricing Management.** Administrator vehicle
+suspension and reinstatement; official rental prices (daily rate, delivery fee,
+deposit) set only by administrators; exact `Decimal` ZAR amounts; append-only
+price history recording who changed what and when (audited); the active price
+added to the public listing condition; price calculation logic with tests; and
+existing bookings keeping their agreed prices. Open decision OPEN-6 (VAT
+registration) affects how prices are displayed. Waiting for owner approval to begin.

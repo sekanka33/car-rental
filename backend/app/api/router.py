@@ -2,10 +2,12 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin_users,
+    admin_vehicles,
     admin_verifications,
     auth,
     customers,
     health,
+    owner_vehicles,
     owners,
     users,
 )
@@ -18,3 +20,5 @@ api_router.include_router(owners.router)
 api_router.include_router(admin_users.router)
 api_router.include_router(customers.router)
 api_router.include_router(admin_verifications.router)
+api_router.include_router(owner_vehicles.router)
+api_router.include_router(admin_vehicles.router)

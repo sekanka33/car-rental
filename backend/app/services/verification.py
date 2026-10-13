@@ -1,6 +1,5 @@
 """Renter identity / licence document submission and administrator review."""
 
-import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
@@ -25,26 +24,12 @@ from app.integrations.storage import DocumentStorage
 from app.models import CustomerProfile, User, VerificationFile, VerificationSubmission
 from app.models.enums import DocumentSide, DocumentType, SubmissionStatus, VerificationStatus
 from app.services.audit import record_audit
+from app.services.uploads import DOCUMENT_TYPES, InvalidUploadError, check_upload
 
 logger = logging.getLogger(__name__)
 SA_TIMEZONE = ZoneInfo("Africa/Johannesburg")
 
-# Magic numbers identify the real file type; the client's Content-Type is not trusted.
-_SIGNATURES: tuple[tuple[bytes, str], ...] = (
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"%PDF-", "application/pdf"),
-)
-
-
-class InvalidDocumentError(AppError):
-    status_code = 422
-    code = "invalid_document"
-
-
-class DocumentTooLargeError(AppError):
-    status_code = 413
-    code = "document_too_large"
+InvalidDocumentError = InvalidUploadError
 
 
 class ProfileIncompleteError(AppError):
@@ -113,10 +98,6 @@ def set_date_of_birth(
 # --- submission ----------------------------------------------------------------------
 
 
-def detect_content_type(data: bytes) -> str | None:
-    return next((ctype for magic, ctype in _SIGNATURES if data.startswith(magic)), None)
-
-
 def submit_document(
     session: Session,
     settings: Settings,
@@ -152,8 +133,14 @@ def submit_document(
         if licence_expiry_date is None or licence_expiry_date <= today:
             raise InvalidDocumentError("The driving licence must not be expired.")
 
-    checked = [(f.side, _check_file(f.data, settings.max_document_bytes), f.data) for f in files]
-    sides = [side for side, _, _ in checked]
+    checked = [
+        (
+            f.side,
+            check_upload(f.data, allowed=DOCUMENT_TYPES, max_bytes=settings.max_document_bytes),
+        )
+        for f in files
+    ]
+    sides = [side for side, _ in checked]
     if DocumentSide.FRONT not in sides or len(set(sides)) != len(sides):
         raise InvalidDocumentError("Upload the front of the document (and optionally the back).")
 
@@ -179,16 +166,16 @@ def submit_document(
             else None,
             licence_codes=licence_codes if document_type == DocumentType.DRIVING_LICENCE else None,
         )
-        for side, content_type, data in checked:
-            storage_key = storage.save(data)
+        for side, upload in checked:
+            storage_key = storage.save(upload.data)
             stored_keys.append(storage_key)
             submission.files.append(
                 VerificationFile(
                     side=side,
                     storage_key=storage_key,
-                    content_type=content_type,
-                    size_bytes=len(data),
-                    sha256=hashlib.sha256(data).hexdigest(),
+                    content_type=upload.content_type,
+                    size_bytes=upload.size_bytes,
+                    sha256=upload.sha256,
                 )
             )
         session.add(submission)
@@ -200,17 +187,6 @@ def submit_document(
             storage.delete(storage_key)
         raise
     return submission
-
-
-def _check_file(data: bytes, max_bytes: int) -> str:
-    if not data:
-        raise InvalidDocumentError("Uploaded file is empty.")
-    if len(data) > max_bytes:
-        raise DocumentTooLargeError(f"Each file must be at most {max_bytes // (1024 * 1024)} MB.")
-    content_type = detect_content_type(data)
-    if content_type is None:
-        raise InvalidDocumentError("Only JPEG, PNG or PDF files are accepted.")
-    return content_type
 
 
 def _approved_elsewhere(session: Session, number_hmac: str, user_id: uuid.UUID) -> bool:

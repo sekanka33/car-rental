@@ -109,3 +109,34 @@ class SubmissionStatus(StrEnum):
     REJECTED = "REJECTED"
     REQUIRES_MORE_INFORMATION = "REQUIRES_MORE_INFORMATION"
     SUPERSEDED = "SUPERSEDED"  # replaced by a newer submission of the same type
+
+
+class VehicleDocumentType(StrEnum):
+    REGISTRATION_CERTIFICATE = "REGISTRATION_CERTIFICATE"  # NaTIS RC1 / proof of ownership
+    LICENCE_DISC = "LICENCE_DISC"
+    INSURANCE = "INSURANCE"
+    ROADWORTHY_CERTIFICATE = "ROADWORTHY_CERTIFICATE"
+
+
+# Documents an owner must provide before a vehicle can be submitted, and which of them expire.
+REQUIRED_VEHICLE_DOCUMENTS: tuple[VehicleDocumentType, ...] = (
+    VehicleDocumentType.REGISTRATION_CERTIFICATE,
+    VehicleDocumentType.LICENCE_DISC,
+    VehicleDocumentType.INSURANCE,
+)
+EXPIRING_VEHICLE_DOCUMENTS: tuple[VehicleDocumentType, ...] = (
+    VehicleDocumentType.LICENCE_DISC,
+    VehicleDocumentType.INSURANCE,
+)
+
+
+class Province(StrEnum):
+    EASTERN_CAPE = "Eastern Cape"
+    FREE_STATE = "Free State"
+    GAUTENG = "Gauteng"
+    KWAZULU_NATAL = "KwaZulu-Natal"
+    LIMPOPO = "Limpopo"
+    MPUMALANGA = "Mpumalanga"
+    NORTH_WEST = "North West"
+    NORTHERN_CAPE = "Northern Cape"
+    WESTERN_CAPE = "Western Cape"

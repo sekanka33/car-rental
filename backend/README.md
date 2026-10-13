@@ -148,6 +148,38 @@ Full ID and licence numbers are never stored. See
 [docs/document-handling.md](../docs/document-handling.md) for what is stored, access
 rules, logging rules and retention.
 
+### Owner vehicles
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET/PATCH /api/v1/owners/me/profile` | `OWNER` | Owner profile (business name, city, province) |
+| `POST /api/v1/owners/me/vehicles` | `OWNER` | Register a vehicle (starts as `DRAFT`; no price or status fields accepted) |
+| `GET /api/v1/owners/me/vehicles[/{id}]` | `OWNER` | Own vehicles with photos, documents and compliance (missing or expired documents) |
+| `PATCH /api/v1/owners/me/vehicles/{id}` | `OWNER` | Edit; material changes on an approved vehicle send it back for review |
+| `DELETE /api/v1/owners/me/vehicles/{id}` | `OWNER` | Delete a `DRAFT` or `REJECTED` vehicle and its files |
+| `POST /api/v1/owners/me/vehicles/{id}/photos` | `OWNER` | Upload a photo (JPEG, PNG or WebP; at most 12) |
+| `GET/DELETE /api/v1/owners/me/vehicles/{id}/photos/{photo_id}` | `OWNER` | View or remove a photo |
+| `POST /api/v1/owners/me/vehicles/{id}/documents` | `OWNER` | Upload `REGISTRATION_CERTIFICATE`, `LICENCE_DISC`*, `INSURANCE`* or `ROADWORTHY_CERTIFICATE` (*with `expiry_date`) |
+| `GET /api/v1/owners/me/vehicles/{id}/documents/{doc_id}` | `OWNER` | View own document |
+| `POST /api/v1/owners/me/vehicles/{id}/submit` | `OWNER` | Submit for review (needs verified email, 3 photos and valid required documents) |
+| `POST /api/v1/owners/me/vehicles/{id}/withdraw` | `OWNER` | Withdraw from review (back to `DRAFT`) |
+| `PUT /api/v1/owners/me/vehicles/{id}/listing` | `OWNER` | `{"available": false}` hides an approved vehicle (`UNAVAILABLE`); `true` lists it again |
+| `GET/POST /api/v1/owners/me/vehicles/{id}/availability-blocks` | `OWNER` | Upcoming blocked periods / block a period (not over a booking) |
+| `DELETE /api/v1/owners/me/vehicles/{id}/availability-blocks/{block_id}` | `OWNER` | Remove a block |
+| `GET /api/v1/admin/vehicles?status=PENDING_APPROVAL` | `ADMIN` | Review queue (oldest submission first) |
+| `GET /api/v1/admin/vehicles/{id}` | `ADMIN` | Vehicle detail with owner |
+| `GET /api/v1/admin/vehicles/{id}/photos/{photo_id}` | `ADMIN` | View a photo |
+| `GET /api/v1/admin/vehicles/{id}/documents/{doc_id}` | `ADMIN` | View a document (**audited**) |
+| `POST /api/v1/admin/vehicles/{id}/approve` | `ADMIN` | Approve (re-checks documents; not your own vehicle) |
+| `POST /api/v1/admin/vehicles/{id}/reject` | `ADMIN` | Reject with a reason shown to the owner |
+
+Vehicle status flow: `DRAFT → PENDING_APPROVAL → APPROVED ⇄ UNAVAILABLE`, with
+`PENDING_APPROVAL → REJECTED → PENDING_APPROVAL` (after fixes) and
+`PENDING_APPROVAL → DRAFT` (withdraw). `SUSPENDED` is set by administrators (Stage 08).
+`publicly_listed_vehicles()` is the single query the marketplace will use. It returns only
+`APPROVED` vehicles of active owners with an unexpired current licence disc and insurance.
+Stage 08 adds the active-price condition.
+
 ### Creating an administrator
 
 Administrators cannot register through the API. An operator with database access runs:
@@ -222,14 +254,14 @@ app/
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, customers, admin_users, admin_verifications, health
+│   └── routes/        # auth, users, owners, owner_vehicles, customers, admin_* , health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL
