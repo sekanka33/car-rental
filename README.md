@@ -4,12 +4,13 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–11 complete. Renters can register and log in in the
+> **Current state:** Stages 01–12 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
-> car and pay for it** (Paystack checkout, verified by the backend), then view, cancel
-> and get refunds for their bookings. The FastAPI backend (PostgreSQL) enforces
-> eligibility, availability, official pricing, the booking state machine and payment
-> verification. Payments run in **test mode only** until live keys are approved. Commands for
+> car and pay for it** (Paystack checkout, verified by the backend), follow its
+> **delivery**, confirm the handover and say when they are ready to return it. Owners
+> deliver (scheduling, handover and return records with photos, problem reports) through
+> the API; administrators reassign and resolve failed deliveries. Payments run in **test
+> mode only** until live keys are approved. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -112,7 +113,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 09 | Customer Marketplace | [x] COMPLETE | backend pytest 293/293; mobile jest 19/19; app↔API browser E2E 24/24; 13 + 5 mutation checks |
 | 10 | Booking and Availability | [x] COMPLETE | backend 426/426 (5 consecutive full runs); mobile 36/36; 30/30 concurrency stress; full renter journey E2E |
 | 11 | Payment Integration | [x] COMPLETE | backend 476/476; mobile 40/40; 9/10 mutations caught (1 equivalent); live E2E 16/16 against a Paystack stand-in |
-| 12 | Delivery Management | NOT STARTED | Not tested |
+| 12 | Delivery Management | [x] COMPLETE | backend 533/533; mobile 44/44; 15/17 mutations caught (2 equivalent); live E2E 20/20 |
 | 13 | Google Maps and Live Tracking | NOT STARTED | Not tested |
 | 14 | Customer and Owner Dashboards | NOT STARTED | Not tested |
 | 15 | Administrator Dashboard | NOT STARTED | Not tested |
@@ -883,6 +884,70 @@ Outstanding limitations:
 Next stage:
 - Stage 12: Delivery Management.
 
+### Stage 12: Delivery Management
+
+Status: COMPLETE (2026-10-13)
+
+Decision: **OPEN-3 — owners deliver by default** (your choice). Administrators can reassign a delivery to another active owner account. No `DRIVER` role was added; the assignee field allows one later without reworking the schema.
+
+Implemented:
+
+**Backend:**
+- **Delivery records:** payment confirmation creates one delivery per booking (`PENDING_SCHEDULE`) in the same transaction, assigned to the vehicle owner. The migration backfills deliveries for bookings that were already confirmed.
+- **Status machine** (`app/services/deliveries.py`): `PENDING_SCHEDULE` → `SCHEDULED` → `EN_ROUTE` → `DELIVERED`; active → `FAILED` / `CANCELLED`; `FAILED` → `SCHEDULED` (admin) / `CANCELLED`. Each step moves the booking too (`DELIVERY_SCHEDULED`, `IN_TRANSIT`, `DELIVERED`), through the booking state machine.
+- **Owner endpoints** (`/api/v1/owners/me/deliveries`): list (to-do, or all with `?active=false`), detail with renter name, phone, address and registration; **schedule** (24 h before the start up to the start; default the start), **start**, **handover** (odometer, fuel, condition), **return**, **exceptions**, **photos** for the handover and return records.
+- **Renter endpoints:** `GET /bookings/{id}/delivery` (the owner's first name only), `POST …/delivery/acknowledge` (confirm receipt, optional disagreement note → `ACTIVE_RENTAL`), `POST …/return-request` (→ `RETURN_PENDING`), private photo download.
+- **Return:** the odometer may not go below the handover reading. Recording the return completes the booking, which frees the dates.
+- **Exceptions:** `DELAY` is informational; any other kind stops the delivery (`FAILED`) for an administrator. Renters see the notes.
+- **Admin endpoints** (`/api/v1/admin/deliveries`): list (`?status=`, `?open_exceptions=true`), detail, **reassign** (active owner accounts only), **reschedule** (any future time before the rental ends; resolves open exceptions), **resolve** a delay, photo view. Cancelling a booking in transit is now possible for administrators (refunded in full).
+- **Photo tamper limits:** handover photos only until the renter confirms; return photos only within 2 hours; at most 10 per record; type checked by content; `no-store`.
+- **Audit:** every delivery action (`delivery.*`).
+- **Booking rule changes:** `IN_TRANSIT` → `DELIVERY_SCHEDULED` (re-attempt) and `IN_TRANSIT` → `CANCELLED` (admin) were added. Renters can now also cancel a `DELIVERY_SCHEDULED` booking before its start.
+- **Migration `0c05c6131ad4`:** `handover_records`, `handover_photos`, `delivery_exceptions`; the new delivery status set; consistency CHECKs (schedule time, start time, cancellation); backfill.
+
+**Mobile (renter):**
+- Booking detail has a **Delivery** section: who delivers and when, owner updates, failed-delivery explanation, and the handover and return records (odometer, fuel, notes, photo count).
+- **"I have the car"** with an optional "anything that does not match?" note, then **"I'm ready to return the car"**.
+- Cancel is offered for delivery-scheduled bookings before the start.
+
+Files changed:
+- Backend:
+  - New: `app/services/deliveries.py`, `app/schemas/deliveries.py`, `app/api/routes/{owner_deliveries,admin_deliveries}.py`, `migrations/versions/2026_10_13_1556-0c05c6131ad4_add_delivery_scheduling_handover_.py`, `tests/deliveries/`
+  - Modified: `app/models/{delivery,enums,__init__}.py`, `app/services/bookings.py`, `app/api/routes/bookings.py`, `app/api/router.py`, `tests/bookings/test_state_machine.py`, `tests/db/test_migrations.py`
+- Mobile:
+  - New: `src/types/delivery.ts`, `src/services/deliveries.ts`, `src/components/delivery-section.tsx`
+  - Changed: `src/app/bookings/[id].tsx`, `__tests__/booking-flow.test.tsx`
+- Docs: all READMEs, `docs/business-rules.md` (BR-5.5, BR-5.6, BR-7), `docs/requirements.md` (OPEN-3), `docs/architecture.md`, `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **533 passed, 0 skipped, 0 failed** (57 new). Covered:
+  - All 36 delivery status pairs against BR-7.
+  - Delivery created and assigned on payment (none before).
+  - Privacy: other owners and renters get 404; renters cannot use owner endpoints.
+  - Scheduling window, timezone required, rescheduling.
+  - Steps in order; the full handover → acknowledge → return-request → return journey with photos and the audit trail.
+  - Return without acknowledgement; odometer may not go backwards; photo windows and limits; input validation.
+  - Delay vs stopping exceptions; admin resolve and reschedule from `IN_TRANSIT`, then delivery continues; admin cancellation in transit; renter cancel when scheduled vs in transit; exceptions only on active deliveries.
+  - Reassignment only to active owner accounts.
+- **Mutation checks:** 15 of 17 caught. These covered the schedule window, assignee checks on actions and reads, booking moved to `IN_TRANSIT`, odometer, both photo windows, delay vs stop, suspended assignee, renter privacy, resolve on a failed delivery, cancel cascading to the delivery, renter cancel in transit, delivery assigned to the owner, and exceptions on finished deliveries (a gap found by this check and closed with a new test). The 2 survivors are equivalent: a renter cannot have an owner profile, and a second acknowledgement is already rejected by the booking state machine.
+- **Mobile:** `npm test` **44 passed** (4 new: delivery time shown, handover confirmed with a note, ready to return, failed delivery explained); typecheck 0 errors; lint clean.
+- **Live end to end, 20/20:** real uvicorn plus the Paystack stand-in. It covered: no delivery before payment; pay → booking confirmed → the owner sees the delivery with renter details; the renter sees the first name only; schedule → start → `ADDRESS_PROBLEM` → failed; renter cannot cancel in transit; the admin queue shows it; admin reschedules; start → handover → photo (renter can view, `no-store`; anonymous rejected) → acknowledge → return request → return → completed; the dates become bookable again; a 10-entry audit trail. The demo car used was handed back to its demo owner afterwards.
+- `alembic upgrade` / `downgrade -1` / `upgrade` and `alembic check` clean; the backfill created the delivery for the one confirmed dev booking.
+- **Problems found and fixed during the stage:**
+  - The migration's downgrade wrote the old 18-character status before widening the column.
+  - Without the Stage 12 cancellation change, the owner confirming a delivery time would have removed the renter's right to cancel.
+  - Test gap: no test covered a `DELAY` report on a finished delivery. The code already rejected it; the test now exists.
+
+Outstanding limitations:
+- **Owners have no delivery screens in the app yet (Stage 14).** They use the API (Swagger UI). Renters cannot see handover photos in the app yet (they see a count); the API serves them.
+- No live location or ETA (Stage 13). No notifications to the renter or owner when the delivery changes (Stage 16).
+- Nothing moves a booking to `RETURN_PENDING` automatically when the rental ends, and late returns are not flagged or charged (OPEN-2). Damage and deposit claims are not handled in the system (OPEN-7).
+- The owner may set off with the car at any time after scheduling; there is no check against the scheduled time.
+- A renter who disputes the handover can only add a note; there is no formal dispute flow.
+
+Next stage:
+- Stage 13: Google Maps and Live Tracking.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -1038,7 +1103,10 @@ reinstate, official price history, set price, quote); **public marketplace**
 (`/vehicles`: search and filters, details, photos, availability, quote); **bookings**
 (`/bookings`: create, history, detail, cancel; `/admin/bookings`: list, detail, cancel); **payments**
 (`/bookings/{id}/payments`: start checkout, list; `/payments/{id}/refresh`; the signed Paystack webhook;
-`/admin/payments`: list, refund, reconcile); renter profile, date of birth, document upload and
+`/admin/payments`: list, refund, reconcile); **deliveries** (`/owners/me/deliveries`:
+list, detail, schedule, start, handover, return, exceptions, photos; `/bookings/{id}/delivery`,
+`…/delivery/acknowledge`, `…/return-request`; `/admin/deliveries`: list, detail, assign,
+reschedule, resolve exception, photos); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -1054,7 +1122,8 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - An automated test checks that every non-public endpoint rejects anonymous requests.
 - ID and licence documents are stored privately, access is logged, and their numbers never appear in public APIs or logs (POPIA).
 - Money is stored as exact decimals in ZAR. Webhooks are HMAC-verified and de-duplicated, and a payment counts only after the backend itself verifies the reference, amount and currency with Paystack. Live payment keys are refused unless `ALLOW_LIVE_PAYMENTS=true`.
-- Location sharing is limited to the assigned delivery person while a delivery is active, and is visible only to the booking's renter and administrators.
+- Deliveries can be acted on only by the assigned delivery person; renters see only their own. Handover and return photos are private, and photos are only accepted shortly after the record (no late "evidence"). The renter sees the delivery person's first name only.
+- Location sharing (Stage 13) will be limited to the assigned delivery person while a delivery is active, and visible only to the booking's renter and administrators.
 - Secrets live only in environment variables. HTTPS is required in production.
 - No real financial transactions or production deployments happen without explicit owner approval.
 
@@ -1080,13 +1149,16 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 
 ## 19. Current Development Status
 
-Stages 01–11 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation) and Paystack payments (verified checkout, idempotent webhooks, automatic and admin refunds, reconciliation), with 476 passing tests. The mobile app has real accounts, the marketplace, booking, payment and My bookings, with 40 passing tests. Delivery management (Stage 12) has not started.
+Stages 01–12 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation), Paystack payments (verified checkout, idempotent webhooks, refunds, reconciliation) and deliveries (owner scheduling, handover and return records with photos, exceptions, admin reassignment and rescheduling), with 533 passing tests. The mobile app has real accounts, the marketplace, booking, payment, delivery progress with handover confirmation and My bookings, with 44 passing tests. Live tracking (Stage 13) has not started.
 
 ## 20. Next Stage
 
-**Stage 12: Delivery Management.** Delivery records for confirmed bookings, assignment,
-scheduling, the delivery status machine (`CONFIRMED` → `DELIVERY_SCHEDULED` →
-`IN_TRANSIT` → `DELIVERED` → `ACTIVE_RENTAL` → `RETURN_PENDING` → `COMPLETED`), handover
-and return records, exceptions and an audit trail. **Needs a decision on OPEN-3** (who
-delivers: owners, platform drivers, or both), which decides whether a `DRIVER` role is
-added. Waiting for owner approval to begin.
+**Stage 13: Google Maps and Live Tracking.** Maps in the app (`react-native-maps`), location
+permissions, location updates from the assigned delivery person only while the delivery is
+`EN_ROUTE`, a WebSocket channel for the renter and administrators, ETA (Routes API),
+stale-location and reconnect handling, and tracking that stops when the delivery ends
+(BR-7.2–7.5). **Needs from you:** Google Maps Platform API keys (Android, iOS and a
+server key for the Routes API, each restricted), and a decision on how long location
+history is kept (proposed 90 days). Without keys, the backend tracking and WebSocket parts
+can be built and tested, and map display waits for the keys. Waiting for owner approval to
+begin.

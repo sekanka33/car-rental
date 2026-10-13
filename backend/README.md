@@ -216,7 +216,7 @@ first name plus the vehicle's area. Availability never reveals reasons or renter
 | `POST /api/v1/bookings` | `RENTER` | Reserve: `vehicle_id`, `start_at`, `end_at` (with timezone), `delivery_address`. The backend checks eligibility (403 `renter_not_eligible` with `details[].reason`), the listing (404), availability (409 `vehicle_unavailable`) and limits, then stores the official price breakdown. The new booking is `PENDING_PAYMENT` with `hold_expires_at` |
 | `GET /api/v1/bookings[?status=]` | `RENTER` | Own booking history, newest first |
 | `GET /api/v1/bookings/{id}` | `RENTER` (own only, else 404) | Booking with its agreed price |
-| `POST /api/v1/bookings/{id}/cancel` | `RENTER` | Cancel an unpaid hold, or a confirmed booking before it starts (a paid booking is refunded in full) |
+| `POST /api/v1/bookings/{id}/cancel` | `RENTER` | Cancel an unpaid hold, or a confirmed or delivery-scheduled booking before it starts (a paid booking is refunded in full) |
 | `GET /api/v1/admin/bookings[?status=&vehicle_id=]` | `ADMIN` | All bookings with renter and owner |
 | `GET /api/v1/admin/bookings/{id}` | `ADMIN` | Detail |
 | `POST /api/v1/admin/bookings/{id}/cancel` | `ADMIN` | Cancel with a required reason (audited; a paid booking is refunded in full) |
@@ -229,6 +229,37 @@ serialise cleanly instead of deadlocking.
 Run `python -m app.cli expire-holds` from cron (e.g. every minute) to mark unpaid holds
 past their deadline `EXPIRED`. They are also expired lazily on reads and before
 availability checks.
+
+### Deliveries
+
+The vehicle owner delivers (OPEN-3 default). A delivery is created, assigned to the owner,
+when payment confirms the booking. Rules: BR-7 in
+[docs/business-rules.md](../docs/business-rules.md).
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET /api/v1/owners/me/deliveries[?active=false]` | `OWNER` (assigned) | Deliveries and returns still to do (or all), with renter name, phone, address, vehicle and registration |
+| `GET /api/v1/owners/me/deliveries/{id}` | `OWNER` (assigned, else 404) | Detail |
+| `POST …/{id}/schedule` | `OWNER` | `scheduled_for` (optional; default the rental start): from 24 h before the start up to the start. Booking → `DELIVERY_SCHEDULED` |
+| `POST …/{id}/start` | `OWNER` | On the way. Booking → `IN_TRANSIT` |
+| `POST …/{id}/handover` | `OWNER` | `odometer_km`, `fuel_level` (`EMPTY`…`FULL`), `condition_notes`. Booking → `DELIVERED` |
+| `POST …/{id}/return` | `OWNER` | Same fields; odometer not below handover. Booking → `COMPLETED` |
+| `POST …/{id}/exceptions` | `OWNER` | `kind` (`DELAY`, `RENTER_UNAVAILABLE`, `ADDRESS_PROBLEM`, `VEHICLE_PROBLEM`, `OTHER`) and `notes`; all but `DELAY` stop the delivery (`FAILED`) |
+| `POST …/{id}/records/{HANDOVER\|RETURN}/photos` | `OWNER` | Multipart `photo`; max 10 per record; handover photos until the renter confirms, return photos within 2 h |
+| `GET …/{id}/photos/{photo_id}` | `OWNER` | Private photo |
+| `GET /api/v1/bookings/{id}/delivery` | `RENTER` (own) | Status, time, owner's first name, handover/return records, owner updates (404 before payment) |
+| `POST /api/v1/bookings/{id}/delivery/acknowledge` | `RENTER` | Confirm receipt, optional `notes`. Booking → `ACTIVE_RENTAL` |
+| `POST /api/v1/bookings/{id}/return-request` | `RENTER` | Ready to return. Booking → `RETURN_PENDING` |
+| `GET /api/v1/bookings/{id}/delivery/photos/{photo_id}` | `RENTER` | Private photo |
+| `GET /api/v1/admin/deliveries[?status=&open_exceptions=true]` | `ADMIN` | All deliveries |
+| `GET /api/v1/admin/deliveries/{id}` | `ADMIN` | Detail with exception resolutions |
+| `POST /api/v1/admin/deliveries/{id}/assign` | `ADMIN` | `user_id` of an active owner account |
+| `POST /api/v1/admin/deliveries/{id}/reschedule` | `ADMIN` | `scheduled_for` (future, before the rental ends) and `note`; resolves open exceptions; re-attempts a failed delivery |
+| `POST /api/v1/admin/deliveries/{id}/exceptions/{eid}/resolve` | `ADMIN` | Close a delay (`note`). A failed delivery must be rescheduled or its booking cancelled |
+| `GET /api/v1/admin/deliveries/{id}/photos/{photo_id}` | `ADMIN` | Private photo |
+
+To give up on a failed delivery, cancel the booking (`POST /api/v1/admin/bookings/{id}/cancel`);
+it is refunded in full. Every action is audited (`delivery.*`).
 
 ### Payments (Paystack)
 
@@ -348,14 +379,14 @@ app/
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, bookings, payments, admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { BookingStatusBadge } from '@/components/booking-status-badge';
+import { DeliverySection } from '@/components/delivery-section';
 import { SignInPrompt } from '@/components/sign-in-prompt';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
@@ -17,8 +18,10 @@ import { ApiError } from '@/lib/api';
 import { formatDateTime } from '@/lib/dates';
 import { formatZar } from '@/lib/format';
 import { cancelBooking, getBooking } from '@/services/bookings';
+import { getDelivery } from '@/services/deliveries';
 import { listBookingPayments, refreshPayment, startPayment } from '@/services/payments';
 import type { Booking } from '@/types/booking';
+import type { Delivery } from '@/types/delivery';
 import type { Payment } from '@/types/payment';
 
 /** The current time, refreshed every 15 seconds (drives the hold countdown). */
@@ -89,10 +92,12 @@ async function payForBooking(bookingId: string): Promise<Payment> {
 function BookingDetails({
   booking,
   payments,
+  delivery,
   onChanged,
 }: {
   booking: Booking;
   payments: Payment[];
+  delivery: Delivery | null;
   onChanged: () => void;
 }) {
   const now = useNow();
@@ -107,7 +112,8 @@ function BookingDetails({
   const [info, setInfo] = useState<string | null>(null);
   const cancellable =
     booking.status === 'PENDING_PAYMENT' ||
-    (booking.status === 'CONFIRMED' && new Date(booking.start_at).getTime() > now);
+    ((booking.status === 'CONFIRMED' || booking.status === 'DELIVERY_SCHEDULED') &&
+      new Date(booking.start_at).getTime() > now);
 
   const cancel = async () => {
     if (!confirming) {
@@ -190,6 +196,8 @@ function BookingDetails({
         <Text className="mt-1 text-sm text-ink-muted">The deposit is not charged online; it is arranged at handover.</Text>
       ) : null}
 
+      {delivery ? <DeliverySection delivery={delivery} onChanged={onChanged} /> : null}
+
       <PaymentHistory payments={payments} />
 
       {error ? (
@@ -219,7 +227,7 @@ function BookingDetails({
           className="mt-4"
         />
       ) : null}
-      {cancellable && booking.status === 'CONFIRMED' ? (
+      {cancellable && booking.status !== 'PENDING_PAYMENT' ? (
         <Text className="mt-2 text-center text-sm text-ink-muted">Cancelling before the trip starts refunds you in full.</Text>
       ) : null}
     </Screen>
@@ -230,7 +238,12 @@ export default function BookingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { state } = useAuth();
   const load = useCallback(
-    () => Promise.all([getBooking(id), listBookingPayments(id)]).then(([b, p]) => ({ booking: b, payments: p })),
+    () =>
+      Promise.all([getBooking(id), listBookingPayments(id), getDelivery(id)]).then(([b, p, d]) => ({
+        booking: b,
+        payments: p,
+        delivery: d,
+      })),
     [id],
   );
   const booking = useAsync(load);
@@ -243,5 +256,12 @@ export default function BookingScreen() {
     }
     return <ErrorState message={booking.error.message} onAction={booking.reload} />;
   }
-  return <BookingDetails booking={booking.data.booking} payments={booking.data.payments} onChanged={booking.reload} />;
+  return (
+    <BookingDetails
+      booking={booking.data.booking}
+      payments={booking.data.payments}
+      delivery={booking.data.delivery}
+      onChanged={booking.reload}
+    />
+  );
 }

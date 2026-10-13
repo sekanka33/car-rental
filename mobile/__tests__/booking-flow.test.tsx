@@ -7,9 +7,11 @@ import BookVehicleScreen from '@/app/vehicles/[id]/book';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
 import { cancelBooking, createBooking, getBooking, getQuote, listMyBookings } from '@/services/bookings';
+import { acknowledgeHandover, getDelivery, requestReturn } from '@/services/deliveries';
 import { listBookingPayments, refreshPayment, startPayment } from '@/services/payments';
 import { getVehicle } from '@/services/vehicles';
 import type { Booking } from '@/types/booking';
+import type { Delivery } from '@/types/delivery';
 import type { Payment } from '@/types/payment';
 
 import { vehicleDetail } from './fixtures';
@@ -27,6 +29,11 @@ jest.mock('@/services/payments', () => ({
   startPayment: jest.fn(),
   refreshPayment: jest.fn(),
   listBookingPayments: jest.fn(),
+}));
+jest.mock('@/services/deliveries', () => ({
+  getDelivery: jest.fn(),
+  acknowledgeHandover: jest.fn(),
+  requestReturn: jest.fn(),
 }));
 jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn(async () => ({ type: 'success' })),
@@ -75,8 +82,25 @@ function payment(overrides: Partial<Payment> = {}): Payment {
   };
 }
 
+function delivery(overrides: Partial<Delivery> = {}): Delivery {
+  return {
+    id: 'd1', booking_id: 'b1', booking_reference: 'BKABCD2345', booking_status: 'DELIVERY_SCHEDULED',
+    status: 'SCHEDULED', scheduled_for: '2026-10-20T08:00:00+02:00', dropoff_address: '12 Long Street',
+    started_at: null, delivered_at: null, delivery_person_first_name: 'Lerato', handover: null,
+    return_record: null, exceptions: [],
+    ...overrides,
+  };
+}
+
+const HANDOVER = {
+  kind: 'HANDOVER' as const, recorded_at: '2026-10-20T08:05:00+02:00', odometer_km: 41200, fuel_level: 'FULL' as const,
+  condition_notes: 'Clean, no damage', renter_acknowledged_at: null, renter_notes: null,
+  photos: [{ id: 'ph1', url: '/x', content_type: 'image/jpeg', created_at: '' }],
+};
+
 beforeEach(() => {
   (listBookingPayments as jest.Mock).mockResolvedValue([]);
+  (getDelivery as jest.Mock).mockResolvedValue(null);
   (useAuth as jest.Mock).mockReturnValue(signedIn);
   (getVehicle as jest.Mock).mockResolvedValue(vehicleDetail());
   (getQuote as jest.Mock).mockResolvedValue(QUOTE);
@@ -236,5 +260,63 @@ describe('paying for a booking', () => {
 
     expect(await screen.findByText('Refunded · PAYABC')).toBeTruthy();
     expect(screen.getByText('− R 2 400.00')).toBeTruthy();
+  });
+});
+
+describe('delivery', () => {
+  it('shows who delivers and when', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking({ status: 'DELIVERY_SCHEDULED', hold_expires_at: null }));
+    (getDelivery as jest.Mock).mockResolvedValue(delivery());
+    await wrap(<BookingScreen />);
+
+    expect(await screen.findByText(/^Lerato delivers on /)).toBeTruthy();
+    expect(screen.getByText('Cancel booking')).toBeTruthy(); // still before the start
+  });
+
+  it('lets the renter confirm the handover with a note', async () => {
+    const delivered = delivery({ status: 'DELIVERED', booking_status: 'DELIVERED', delivered_at: '2026-10-20T08:05:00+02:00', handover: HANDOVER });
+    (getBooking as jest.Mock)
+      .mockResolvedValueOnce(booking({ status: 'DELIVERED', hold_expires_at: null }))
+      .mockResolvedValueOnce(booking({ status: 'ACTIVE_RENTAL', hold_expires_at: null }));
+    (getDelivery as jest.Mock)
+      .mockResolvedValueOnce(delivered)
+      .mockResolvedValueOnce({ ...delivered, booking_status: 'ACTIVE_RENTAL' });
+    (acknowledgeHandover as jest.Mock).mockResolvedValue(delivered);
+    await wrap(<BookingScreen />);
+
+    expect(await screen.findByText(/41 ?200 km · Full tank/)).toBeTruthy();
+    expect(screen.getByText('1 photo recorded')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Anything that does not match? (optional)'), ' Scratch on boot ');
+    await fireEvent.press(screen.getByText('I have the car'));
+
+    expect(acknowledgeHandover).toHaveBeenCalledWith('b1', 'Scratch on boot');
+    expect(await screen.findByText("I'm ready to return the car")).toBeTruthy();
+  });
+
+  it('tells the owner the renter is ready to return', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking({ status: 'ACTIVE_RENTAL', hold_expires_at: null }));
+    (getDelivery as jest.Mock).mockResolvedValue(delivery({ status: 'DELIVERED', booking_status: 'ACTIVE_RENTAL', delivered_at: '2026-10-20T08:05:00+02:00', handover: HANDOVER }));
+    (requestReturn as jest.Mock).mockResolvedValue(delivery());
+    await wrap(<BookingScreen />);
+
+    await fireEvent.press(await screen.findByText("I'm ready to return the car"));
+
+    expect(requestReturn).toHaveBeenCalledWith('b1');
+    expect(screen.queryByText('Cancel booking')).toBeNull();
+  });
+
+  it('explains a failed delivery and shows the owner update', async () => {
+    (getBooking as jest.Mock).mockResolvedValue(booking({ status: 'IN_TRANSIT', hold_expires_at: null }));
+    (getDelivery as jest.Mock).mockResolvedValue(
+      delivery({
+        status: 'FAILED', booking_status: 'IN_TRANSIT',
+        exceptions: [{ id: 'e1', kind: 'VEHICLE_PROBLEM', notes: 'Flat tyre', created_at: '', resolved_at: null, resolution: null }],
+      }),
+    );
+    await wrap(<BookingScreen />);
+
+    expect(await screen.findByText(/could not be completed/)).toBeTruthy();
+    expect(screen.getByText('Update from the owner: Flat tyre')).toBeTruthy();
+    expect(screen.queryByText('Cancel booking')).toBeNull();
   });
 });

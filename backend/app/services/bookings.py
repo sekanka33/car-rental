@@ -2,8 +2,9 @@
 cancellation; and the booking status state machine (BR-5).
 
 Default cancellation policy while OPEN-2 is undecided: a renter may cancel a pending hold
-at any time and a confirmed booking before it starts; afterwards only administrators can.
-Refund amounts are decided by the payment stage (Stage 11).
+at any time, and a confirmed or delivery-scheduled booking before it starts; afterwards only
+administrators can. A cancelled paid booking is refunded in full (Stage 11). Confirming a
+booking creates its delivery, assigned to the vehicle owner (OPEN-3 default, Stage 12).
 """
 
 import secrets
@@ -16,8 +17,16 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings
 from app.core.errors import AppError, NotFoundError, PermissionDeniedError
-from app.models import Booking, OwnerProfile, User, Vehicle, VehicleAvailabilityBlock
-from app.models.enums import BookingStatus
+from app.models import (
+    Booking,
+    Delivery,
+    DeliveryException,
+    OwnerProfile,
+    User,
+    Vehicle,
+    VehicleAvailabilityBlock,
+)
+from app.models.enums import BookingStatus, DeliveryStatus
 from app.services import marketplace
 from app.services.audit import record_audit
 from app.services.eligibility import evaluate_renter_eligibility
@@ -30,7 +39,8 @@ ALLOWED_TRANSITIONS: dict[BookingStatus, frozenset[BookingStatus]] = {
     S.PENDING_PAYMENT: frozenset({S.CONFIRMED, S.EXPIRED, S.CANCELLED}),
     S.CONFIRMED: frozenset({S.DELIVERY_SCHEDULED, S.CANCELLED}),
     S.DELIVERY_SCHEDULED: frozenset({S.IN_TRANSIT, S.CANCELLED}),
-    S.IN_TRANSIT: frozenset({S.DELIVERED}),
+    # Back to DELIVERY_SCHEDULED when a failed delivery is re-attempted (Stage 12).
+    S.IN_TRANSIT: frozenset({S.DELIVERED, S.DELIVERY_SCHEDULED, S.CANCELLED}),
     S.DELIVERED: frozenset({S.ACTIVE_RENTAL}),
     S.ACTIVE_RENTAL: frozenset({S.RETURN_PENDING}),
     S.RETURN_PENDING: frozenset({S.COMPLETED}),
@@ -38,8 +48,8 @@ ALLOWED_TRANSITIONS: dict[BookingStatus, frozenset[BookingStatus]] = {
     S.EXPIRED: frozenset(),
     S.COMPLETED: frozenset(),
 }
-RENTER_CANCELLABLE = frozenset({S.PENDING_PAYMENT, S.CONFIRMED})
-ADMIN_CANCELLABLE = frozenset({S.PENDING_PAYMENT, S.CONFIRMED, S.DELIVERY_SCHEDULED})
+RENTER_CANCELLABLE = frozenset({S.PENDING_PAYMENT, S.CONFIRMED, S.DELIVERY_SCHEDULED})
+ADMIN_CANCELLABLE = frozenset({S.PENDING_PAYMENT, S.CONFIRMED, S.DELIVERY_SCHEDULED, S.IN_TRANSIT})
 _REFERENCE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"  # no 0/O, 1/I/L, U
 
 
@@ -311,7 +321,7 @@ def cancel_as_renter(
         raise InvalidTransitionError(
             f"A {booking.status} booking cannot be cancelled by the renter."
         )
-    if booking.status == S.CONFIRMED and booking.start_at <= _now():
+    if booking.status != S.PENDING_PAYMENT and booking.start_at <= _now():
         raise InvalidTransitionError("The rental has started; contact support to cancel.")
     return _cancel(session, booking, actor=renter, reason=reason or "Cancelled by renter")
 
@@ -329,6 +339,7 @@ def _cancel(session: Session, booking: Booking, *, actor: User, reason: str) -> 
     booking.cancelled_at = _now()
     booking.cancelled_by_id = actor.id
     booking.cancellation_reason = reason
+    _cancel_delivery(session, booking, actor=actor, reason=reason)
     record_audit(
         session,
         actor_id=actor.id,
@@ -341,6 +352,25 @@ def _cancel(session: Session, booking: Booking, *, actor: User, reason: str) -> 
     return get_booking(session, booking.id)
 
 
+def _cancel_delivery(session: Session, booking: Booking, *, actor: User, reason: str) -> None:
+    delivery = session.scalar(
+        select(Delivery).where(Delivery.booking_id == booking.id).with_for_update()
+    )
+    if delivery is None or delivery.status in (DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED):
+        return
+    now = _now()
+    delivery.status = DeliveryStatus.CANCELLED
+    delivery.cancelled_at = now
+    for exception in session.scalars(
+        select(DeliveryException).where(
+            DeliveryException.delivery_id == delivery.id, DeliveryException.resolved_at.is_(None)
+        )
+    ):
+        exception.resolved_at = now
+        exception.resolved_by_id = actor.id
+        exception.resolution = f"Booking cancelled: {reason}"[:1000]
+
+
 def confirm_booking(
     session: Session, booking_id: uuid.UUID, *, now: datetime | None = None
 ) -> Booking:
@@ -351,6 +381,20 @@ def confirm_booking(
         raise HoldExpiredError("The booking hold expired before payment completed.")
     transition(booking, S.CONFIRMED)
     booking.confirmed_at = now
+    # Every paid booking gets one delivery, assigned to the vehicle owner (OPEN-3 default).
+    owner_user_id = session.scalar(
+        select(OwnerProfile.user_id)
+        .join(Vehicle, Vehicle.owner_id == OwnerProfile.id)
+        .where(Vehicle.id == booking.vehicle_id)
+    )
+    session.add(
+        Delivery(
+            booking_id=booking.id,
+            assigned_to_id=owner_user_id,
+            status=DeliveryStatus.PENDING_SCHEDULE,
+            dropoff_address=booking.delivery_address or "",
+        )
+    )
     record_audit(
         session,
         actor_id=None,

@@ -17,6 +17,8 @@ EXPECTED = {
     (S.DELIVERY_SCHEDULED, S.IN_TRANSIT),
     (S.DELIVERY_SCHEDULED, S.CANCELLED),
     (S.IN_TRANSIT, S.DELIVERED),
+    (S.IN_TRANSIT, S.DELIVERY_SCHEDULED),  # failed delivery re-attempted (Stage 12)
+    (S.IN_TRANSIT, S.CANCELLED),  # administrator gives up on a failed delivery
     (S.DELIVERED, S.ACTIVE_RENTAL),
     (S.ACTIVE_RENTAL, S.RETURN_PENDING),
     (S.RETURN_PENDING, S.COMPLETED),

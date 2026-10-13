@@ -93,13 +93,33 @@ class RefundStatus(StrEnum):
 
 
 class DeliveryStatus(StrEnum):
-    PENDING_ASSIGNMENT = "PENDING_ASSIGNMENT"
+    PENDING_SCHEDULE = "PENDING_SCHEDULE"  # created on payment; delivery person sets the time
     SCHEDULED = "SCHEDULED"
     EN_ROUTE = "EN_ROUTE"
-    ARRIVED = "ARRIVED"
-    DELIVERED = "DELIVERED"
+    DELIVERED = "DELIVERED"  # handover recorded
+    FAILED = "FAILED"  # an exception stopped the delivery; an administrator resolves it
     CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
+
+
+class DeliveryExceptionKind(StrEnum):
+    DELAY = "DELAY"  # informational: the delivery continues
+    RENTER_UNAVAILABLE = "RENTER_UNAVAILABLE"
+    ADDRESS_PROBLEM = "ADDRESS_PROBLEM"
+    VEHICLE_PROBLEM = "VEHICLE_PROBLEM"
+    OTHER = "OTHER"
+
+
+class HandoverKind(StrEnum):
+    HANDOVER = "HANDOVER"  # vehicle given to the renter
+    RETURN = "RETURN"  # vehicle collected back from the renter
+
+
+class FuelLevel(StrEnum):
+    EMPTY = "EMPTY"
+    QUARTER = "QUARTER"
+    HALF = "HALF"
+    THREE_QUARTERS = "THREE_QUARTERS"
+    FULL = "FULL"
 
 
 class DocumentType(StrEnum):

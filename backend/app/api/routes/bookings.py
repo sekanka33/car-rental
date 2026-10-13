@@ -1,12 +1,20 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
-from app.api.deps import AppSettings, DbSession, PaymentProviderDep, RenterUser
+from app.api.deps import (
+    AppSettings,
+    DbSession,
+    DocumentStorageDep,
+    PaymentProviderDep,
+    RenterUser,
+)
+from app.api.routes.customers import PRIVATE_FILE_HEADERS
 from app.models.enums import BookingStatus
 from app.schemas.bookings import BookingCreate, BookingResponse, CancelBooking
-from app.services import bookings, payments
+from app.schemas.deliveries import AcknowledgeHandover, DeliveryResponse
+from app.services import bookings, deliveries, payments
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -64,3 +72,41 @@ def cancel_my_booking(
         session, provider, booking, actor=user, reason=booking.cancellation_reason or "Cancelled"
     )
     return BookingResponse.from_model(bookings.get_booking(session, booking.id))
+
+
+@router.get("/{booking_id}/delivery", response_model=DeliveryResponse)
+def read_my_delivery(
+    booking_id: uuid.UUID, user: RenterUser, session: DbSession
+) -> DeliveryResponse:
+    """Delivery status, time, handover and return records (exists once the booking is paid)."""
+    return DeliveryResponse.for_renter(deliveries.get_booking_delivery(session, user, booking_id))
+
+
+@router.post("/{booking_id}/delivery/acknowledge", response_model=DeliveryResponse)
+def acknowledge_handover(
+    booking_id: uuid.UUID, body: AcknowledgeHandover, user: RenterUser, session: DbSession
+) -> DeliveryResponse:
+    """Confirm you have the car, optionally noting anything you disagree with.
+    This starts the rental."""
+    return DeliveryResponse.for_renter(
+        deliveries.acknowledge_handover(session, user, booking_id, body.notes)
+    )
+
+
+@router.post("/{booking_id}/return-request", response_model=DeliveryResponse)
+def request_return(booking_id: uuid.UUID, user: RenterUser, session: DbSession) -> DeliveryResponse:
+    """Tell the owner you are ready to hand the car back."""
+    return DeliveryResponse.for_renter(deliveries.request_return(session, user, booking_id))
+
+
+@router.get("/{booking_id}/delivery/photos/{photo_id}", response_class=Response)
+def read_delivery_photo(
+    booking_id: uuid.UUID,
+    photo_id: uuid.UUID,
+    user: RenterUser,
+    session: DbSession,
+    storage: DocumentStorageDep,
+) -> Response:
+    delivery = deliveries.get_booking_delivery(session, user, booking_id)
+    content_type, data = deliveries.read_photo(session, storage, delivery, photo_id)
+    return Response(content=data, media_type=content_type, headers=PRIVATE_FILE_HEADERS)

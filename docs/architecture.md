@@ -66,10 +66,11 @@ Planned core tables for Stage 04 (more added as features need them):
 `vehicles`, `vehicle_images`, `vehicle_prices`, `bookings`, `payments`,
 `deliveries`, `audit_logs`
 
-Expected additions later: `identity_documents`, `vehicle_documents`,
-`verification_decisions`, `vehicle_availability_blocks`, `payment_events`,
-`refunds`, `delivery_location_updates`, `handover_records`, `refresh_tokens`,
-`notifications`.
+Added since: `refresh_tokens`, `user_action_tokens`, `verification_submissions`,
+`verification_files`, `vehicle_documents`, `vehicle_availability_blocks`,
+`payment_events`, `refunds` (Stage 11), `handover_records`, `handover_photos` and
+`delivery_exceptions` (Stage 12). Still to come: `delivery_location_updates` (Stage 13)
+and `notifications` (Stage 16).
 
 Key integrity decisions:
 - Money: `NUMERIC(12,2)` with a `currency CHAR(3) DEFAULT 'ZAR'` check.

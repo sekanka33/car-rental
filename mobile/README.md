@@ -37,6 +37,14 @@ verified result. Set the backend's `PAYMENT_CALLBACK_URL` to
 `http://localhost:8081/payments/return` for the web preview. On a phone the in-app
 browser is closed by the renter, and the app verifies the payment then.
 
+## Delivery
+
+Once a booking is paid, booking detail shows its delivery (`src/components/delivery-section.tsx`):
+who delivers and when, updates from the owner, and the handover and return records. The
+renter confirms receipt with **"I have the car"** (optionally noting anything that does
+not match the handover record), then taps **"I'm ready to return the car"** when done.
+Owner delivery screens arrive in Stage 14; until then owners use the API.
+
 ## Commands
 
 ```bash

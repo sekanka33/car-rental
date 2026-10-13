@@ -29,6 +29,9 @@ EXPECTED_TABLES = {
     "vehicle_availability_blocks",
     "payment_events",
     "refunds",
+    "handover_records",
+    "handover_photos",
+    "delivery_exceptions",
 }
 
 pytestmark = requires_db
