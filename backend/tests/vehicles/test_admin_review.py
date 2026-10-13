@@ -203,6 +203,13 @@ def test_only_approved_compliant_vehicles_of_active_owners_are_publicly_listed(
     assert listed_ids(db_session) == set()  # draft and pending are hidden
 
     approve(api, admin, vehicle["id"])
+    assert listed_ids(db_session) == set()  # approved but not priced yet
+    priced = api.post(
+        f"{ADMIN}/{vehicle['id']}/prices",
+        headers=admin.headers,
+        json={"daily_rate": "650.00", "change_reason": "Launch price"},
+    )
+    assert priced.status_code == 201
     assert listed_ids(db_session) == {vehicle["id"]}
     assert draft["id"] not in listed_ids(db_session)
 

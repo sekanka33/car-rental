@@ -1,6 +1,7 @@
 import re
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -113,6 +114,73 @@ class AvailabilityBlockCreate(RequestModel):
         return value
 
 
+# Exact rand amounts: at most 2 decimal places, sanity-capped. Returned as strings ("650.00").
+DailyRate = Annotated[Decimal, Field(gt=0, le=Decimal("100000.00"), max_digits=9, decimal_places=2)]
+Fee = Annotated[Decimal, Field(ge=0, le=Decimal("100000.00"), max_digits=9, decimal_places=2)]
+
+
+class OfficialPriceCreate(RequestModel):
+    daily_rate: DailyRate
+    delivery_fee: Fee = Decimal("0.00")
+    deposit_amount: Fee = Decimal("0.00")
+    change_reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)
+    ]
+    effective_from: datetime | None = Field(
+        default=None,
+        description="When the price takes effect (default: now; cannot be in the past)",
+    )
+
+    @field_validator("effective_from")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class PriceSummary(BaseModel):
+    id: uuid.UUID
+    daily_rate: Decimal
+    delivery_fee: Decimal
+    deposit_amount: Decimal
+    currency: str
+    effective_from: datetime
+
+    @classmethod
+    def from_model(cls, price) -> "PriceSummary":
+        return cls(
+            id=price.id,
+            daily_rate=price.daily_rate,
+            delivery_fee=price.delivery_fee,
+            deposit_amount=price.deposit_amount,
+            currency=price.currency,
+            effective_from=price.effective_from,
+        )
+
+
+class OfficialPriceResponse(PriceSummary):
+    change_reason: str | None
+    created_by_id: uuid.UUID
+    created_at: datetime
+    is_current: bool
+
+
+class QuoteResponse(BaseModel):
+    vehicle_price_id: uuid.UUID
+    daily_rate: Decimal
+    rental_days: int
+    rental_amount: Decimal
+    delivery_fee: Decimal
+    deposit_amount: Decimal
+    total_amount: Decimal
+    currency: str
+
+
+class SuspendVehicle(RequestModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
+
+
 class RejectVehicle(RequestModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 
@@ -163,9 +231,13 @@ class OwnerVehicleResponse(BaseModel):
     description: str | None
     status: VehicleStatus
     rejection_reason: str | None
+    suspension_reason: str | None
     submitted_at: datetime | None
     approved_at: datetime | None
     created_at: datetime
+    current_price: PriceSummary | None = Field(
+        description="Official price in effect now (read-only)"
+    )
     photos: list[PhotoResponse]
     documents: list[VehicleDocumentResponse]
     compliance: ComplianceResponse
@@ -195,11 +267,13 @@ class OwnerVehicleResponse(BaseModel):
                     "description",
                     "status",
                     "rejection_reason",
+                    "suspension_reason",
                     "submitted_at",
                     "approved_at",
                     "created_at",
                 )
             },
+            current_price=_current_price(vehicle),
             photos=[
                 PhotoResponse(
                     id=i.id,
@@ -226,6 +300,16 @@ class OwnerVehicleResponse(BaseModel):
             ),
             **extra,
         )
+
+
+def _current_price(vehicle) -> PriceSummary | None:
+    now = datetime.now(UTC)
+    in_effect = [p for p in vehicle.prices if p.effective_from <= now]
+    return (
+        PriceSummary.from_model(max(in_effect, key=lambda p: p.effective_from))
+        if in_effect
+        else None
+    )
 
 
 class VehicleOwnerSummary(BaseModel):

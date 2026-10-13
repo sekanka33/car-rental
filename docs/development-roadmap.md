@@ -14,7 +14,7 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 | 05 | Authentication and Authorisation | [x] COMPLETE | 04 |
 | 06 | Customer Eligibility and Document Verification | [x] COMPLETE | 05 |
 | 07 | Owner Profiles and Vehicle Registration | [x] COMPLETE | 05 |
-| 08 | Administrator Pricing Management | NOT STARTED | 07 |
+| 08 | Administrator Pricing Management | [x] COMPLETE | 07 |
 | 09 | Customer Marketplace | NOT STARTED | 02, 08 |
 | 10 | Booking and Availability | NOT STARTED | 06, 08, 09 |
 | 11 | Payment Integration | NOT STARTED | 10 |

@@ -32,6 +32,9 @@ class Vehicle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "status <> 'APPROVED' OR approved_at IS NOT NULL", name="approved_has_timestamp"
         ),
+        CheckConstraint(
+            "(status = 'SUSPENDED') = (suspended_at IS NOT NULL)", name="suspension_consistent"
+        ),
         Index("ix_vehicles_status_city", "status", "city"),
     )
 
@@ -61,6 +64,8 @@ class Vehicle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    suspended_at: Mapped[datetime | None]
+    suspension_reason: Mapped[str | None] = mapped_column(String(500))
 
     owner: Mapped[OwnerProfile] = relationship()
     images: Mapped[list["VehicleImage"]] = relationship(
@@ -166,7 +171,8 @@ class VehiclePrice(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
         CheckConstraint("delivery_fee >= 0", name="delivery_fee_non_negative"),
         CheckConstraint("deposit_amount >= 0", name="deposit_non_negative"),
         CheckConstraint(f"currency = '{CURRENCY_ZAR}'", name="currency_zar"),
-        Index("ix_vehicle_prices_vehicle_effective", "vehicle_id", "effective_from"),
+        # One price per vehicle per moment, so "the current price" is never ambiguous.
+        Index("uq_vehicle_prices_vehicle_effective", "vehicle_id", "effective_from", unique=True),
     )
 
     vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id", ondelete="RESTRICT"))

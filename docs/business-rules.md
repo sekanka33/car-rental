@@ -30,7 +30,7 @@ Additional rules:
 
 ## BR-3 Vehicles
 1. New vehicles start in `DRAFT`. The owner submits them to `PENDING_APPROVAL`.
-2. Only an administrator can move a vehicle to `APPROVED`, `REJECTED`, or `SUSPENDED`.
+2. Only an administrator can move a vehicle to `APPROVED`, `REJECTED`, or `SUSPENDED`. Suspension (with a reason, audited) hides the vehicle at once and blocks owner edits. Reinstatement returns a previously approved vehicle to `APPROVED`, otherwise to `DRAFT`. Suspension does not cancel existing bookings automatically (Stage 10 and 12 handle affected bookings).
 3. The owner can switch an approved vehicle between `APPROVED` and `UNAVAILABLE`. This does not cancel existing bookings; conflicts are flagged to an administrator.
 4. Approval and official pricing are separate administrator actions. A vehicle is **publicly listed and bookable only when it is `APPROVED` and has an active official price** (price rules: Stage 08; enforced in listings: Stage 09). *(Revised in Stage 07: the original rule "price before approval" would have made approval impossible before Stage 08.)*
 5. Only `APPROVED` vehicles appear in public listings or accept new bookings, and only while the owner's account is active and the current licence disc and insurance are unexpired (`publicly_listed_vehicles()` in `app/services/vehicles.py`).
@@ -44,11 +44,15 @@ Additional rules:
 ## BR-4 Pricing
 1. Only administrators create or change official prices. Owner and renter requests that include price fields are rejected or ignored.
 2. Money is stored as `NUMERIC(12,2)` and handled as Python `Decimal`. The currency is always `ZAR`.
-3. Price records are append-only, each with `effective_from` and `created_by`. The current price is the most recent active record.
+3. Price records are append-only, each with `effective_from` and `created_by`; a database trigger rejects any UPDATE or DELETE on `vehicle_prices`. The current price is the record with the latest `effective_from` that is not in the future. Prices may be scheduled for the future but never backdated, and two prices for one vehicle cannot take effect at the same instant.
 4. Rental charge = daily rate × number of billable days. A billable day is each started 24-hour period from pickup or delivery (to be confirmed under OPEN-2). Delivery fee and deposit are separate line items.
 5. Rounding: round half up to 2 decimal places, applied once per line item.
 6. When a booking is created, its full price breakdown is copied into the booking. Later price changes never change existing bookings.
-7. Every price change writes an audit log entry with the old value, new value, actor, and time.
+7. Every price change writes an audit log entry with the old value, new value, actor, reason, and time.
+8. Prices are entered with at most 2 decimal places (daily rate greater than 0; fees and deposit at least 0; each at most R100 000) and are returned as exact strings, e.g. `"650.00"`.
+9. Administrators cannot set the price of a vehicle they own (BR-1.4).
+10. **VAT (OPEN-6, undecided):** official prices are treated as final, VAT-inclusive rand amounts. No separate VAT line is calculated until the business confirms its VAT registration.
+11. Implemented in `app/services/pricing.py` (Stage 08). The quote total is rental plus delivery fee; the deposit is shown separately and held separately (BR-6, Stage 11).
 
 ## BR-5 Bookings
 1. The backend calculates the price. Client-sent totals are ignored.

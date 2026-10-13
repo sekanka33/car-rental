@@ -20,6 +20,7 @@ from app.models import (
     VehicleAvailabilityBlock,
     VehicleDocument,
     VehicleImage,
+    VehiclePrice,
 )
 from app.models.enums import (
     BLOCKING_BOOKING_STATUSES,
@@ -100,6 +101,7 @@ def _vehicle_query() -> Select:
     return select(Vehicle).options(
         selectinload(Vehicle.images),
         selectinload(Vehicle.documents),
+        selectinload(Vehicle.prices),
         selectinload(Vehicle.owner).selectinload(OwnerProfile.user),
     )
 
@@ -588,16 +590,61 @@ def reject_vehicle(
     return get_vehicle(session, vehicle.id)
 
 
+def suspend_vehicle(
+    session: Session, *, admin: User, vehicle_id: uuid.UUID, reason: str
+) -> Vehicle:
+    """Take a vehicle off the marketplace. Existing bookings are not cancelled automatically."""
+    vehicle = get_vehicle(session, vehicle_id, for_update=True)
+    if vehicle.status in (VehicleStatus.SUSPENDED, VehicleStatus.DRAFT, VehicleStatus.REJECTED):
+        raise VehicleStateError(f"A {vehicle.status} vehicle cannot be suspended.")
+    previous = vehicle.status
+    vehicle.status = VehicleStatus.SUSPENDED
+    vehicle.suspended_at = _now()
+    vehicle.suspension_reason = reason
+    record_audit(
+        session,
+        actor_id=admin.id,
+        action="vehicle.suspended",
+        entity_type="vehicle",
+        entity_id=vehicle.id,
+        changes={"status": {"from": previous, "to": "SUSPENDED"}, "reason": reason},
+    )
+    session.commit()
+    return get_vehicle(session, vehicle.id)
+
+
+def reinstate_vehicle(session: Session, *, admin: User, vehicle_id: uuid.UUID) -> Vehicle:
+    """Lift a suspension: previously approved vehicles return to APPROVED, others to DRAFT."""
+    vehicle = get_vehicle(session, vehicle_id, for_update=True)
+    if vehicle.status != VehicleStatus.SUSPENDED:
+        raise VehicleStateError("Only suspended vehicles can be reinstated.")
+    target = VehicleStatus.APPROVED if vehicle.approved_at is not None else VehicleStatus.DRAFT
+    vehicle.status = target
+    vehicle.suspended_at = None
+    vehicle.suspension_reason = None
+    record_audit(
+        session,
+        actor_id=admin.id,
+        action="vehicle.reinstated",
+        entity_type="vehicle",
+        entity_id=vehicle.id,
+        changes={"status": {"from": "SUSPENDED", "to": target}},
+    )
+    session.commit()
+    return get_vehicle(session, vehicle.id)
+
+
 # --- public visibility ---------------------------------------------------------------------------
 
 
 def publicly_listed_vehicles() -> Select:
     """The only vehicles the marketplace may show or book (used from Stage 09).
 
-    APPROVED, owner account ACTIVE, and current licence disc and insurance not expired.
-    Stage 08 adds: an active official price.
+    APPROVED, owner account ACTIVE, current licence disc and insurance not expired, and an
+    official price already in effect.
     """
     today = today_in_south_africa()
+    now = _now()
 
     def valid(doc_type: VehicleDocumentType):
         return exists().where(
@@ -623,6 +670,9 @@ def publicly_listed_vehicles() -> Select:
                 Vehicle.status == VehicleStatus.APPROVED,
                 User.status == UserStatus.ACTIVE,
                 *(valid(t) for t in EXPIRING_VEHICLE_DOCUMENTS),
+                exists().where(
+                    VehiclePrice.vehicle_id == Vehicle.id, VehiclePrice.effective_from <= now
+                ),
             )
         )
     )

@@ -172,13 +172,27 @@ rules, logging rules and retention.
 | `GET /api/v1/admin/vehicles/{id}/documents/{doc_id}` | `ADMIN` | View a document (**audited**) |
 | `POST /api/v1/admin/vehicles/{id}/approve` | `ADMIN` | Approve (re-checks documents; not your own vehicle) |
 | `POST /api/v1/admin/vehicles/{id}/reject` | `ADMIN` | Reject with a reason shown to the owner |
+| `POST /api/v1/admin/vehicles/{id}/suspend` | `ADMIN` | Suspend with a reason (hidden at once; owner cannot edit or relist; audited) |
+| `POST /api/v1/admin/vehicles/{id}/reinstate` | `ADMIN` | Lift a suspension (back to `APPROVED` if it was approved, otherwise `DRAFT`) |
+| `GET /api/v1/admin/vehicles/{id}/prices` | `ADMIN` | Official price history, newest first, with `is_current` |
+| `POST /api/v1/admin/vehicles/{id}/prices` | `ADMIN` | New official price: `daily_rate`, `delivery_fee`, `deposit_amount` (strings, at most 2 decimals), `change_reason`, optional future `effective_from` (audited) |
+| `GET /api/v1/admin/vehicles/{id}/quote?start_at=&end_at=` | `ADMIN` | Price breakdown at the current official price |
 
 Vehicle status flow: `DRAFT → PENDING_APPROVAL → APPROVED ⇄ UNAVAILABLE`, with
 `PENDING_APPROVAL → REJECTED → PENDING_APPROVAL` (after fixes) and
-`PENDING_APPROVAL → DRAFT` (withdraw). `SUSPENDED` is set by administrators (Stage 08).
+`PENDING_APPROVAL → DRAFT` (withdraw). `SUSPENDED` is set and lifted by administrators.
 `publicly_listed_vehicles()` is the single query the marketplace will use. It returns only
-`APPROVED` vehicles of active owners with an unexpired current licence disc and insurance.
-Stage 08 adds the active-price condition.
+`APPROVED` vehicles of active owners with an unexpired current licence disc and insurance,
+**and an official price already in effect**. Owners see their vehicle's current price
+read-only (`current_price`) and cannot send price fields anywhere.
+
+### Official pricing
+
+- Prices are exact `Decimal` rand amounts (`NUMERIC(12,2)`), treated as final and VAT-inclusive until OPEN-6 is decided.
+- The table is **append-only**: a database trigger rejects UPDATE and DELETE, so history cannot be rewritten, even with direct SQL.
+- Each price row records who set it, when, why, and when it takes effect. Every change is audited with the old and new values.
+- Calculation (`app/services/pricing.py`): every started 24 hours is one billable day; `rental = daily_rate × days`; `total = rental + delivery_fee`; the deposit is a separate line. Amounts are rounded half-up to cents.
+- Bookings copy the full breakdown (`vehicle_price_id`, rates, days, amounts), so later price changes never affect them (Stage 10 creates bookings from this calculation).
 
 ### Creating an administrator
 

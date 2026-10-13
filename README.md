@@ -4,11 +4,12 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–07 complete. The mobile app foundation runs with
+> **Current state:** Stages 01–08 complete. The mobile app foundation runs with
 > **prototype sample data** (not yet connected to the API). The FastAPI backend runs
 > on PostgreSQL with authentication, role-based access control, renter eligibility,
-> and owner vehicle registration with administrator approval. Official pricing,
-> the public marketplace, bookings, and payments are not built yet. Commands for
+> owner vehicle registration with administrator approval and suspension, and
+> administrator-controlled official pricing. The public marketplace API, bookings,
+> and payments are not built yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -106,7 +107,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 05 | Authentication and Authorisation | [x] COMPLETE | pytest 129/129, 6 mutation checks, live E2E flow, fresh-venv install |
 | 06 | Customer Eligibility and Document Verification | [x] COMPLETE | pytest 179/179, 8 mutation checks, live upload/review E2E, fresh-venv install |
 | 07 | Owner Profiles and Vehicle Registration | [x] COMPLETE | pytest 219/219, 9 mutation checks, live owner→admin E2E |
-| 08 | Administrator Pricing Management | NOT STARTED | Not tested |
+| 08 | Administrator Pricing Management | [x] COMPLETE | pytest 259/259, 11 mutation checks, live E2E incl. direct-SQL tamper test |
 | 09 | Customer Marketplace | NOT STARTED | Not tested |
 | 10 | Booking and Availability | NOT STARTED | Not tested |
 | 11 | Payment Integration | NOT STARTED | Not tested |
@@ -531,6 +532,88 @@ Outstanding limitations:
 Next stage:
 - Stage 08: Administrator Pricing Management.
 
+### Stage 08: Administrator Pricing Management
+
+Status: COMPLETE (2026-10-13)
+
+Default for an open decision: **OPEN-6 (VAT)** is undecided, so official prices are treated as final, VAT-inclusive rand amounts with no separate VAT line.
+
+Implemented:
+- **Administrator vehicle management:**
+  - Approve and reject (from Stage 07).
+  - **Suspend** with a reason: hidden at once, owner cannot edit or relist, audited.
+  - **Reinstate:** back to `APPROVED` if previously approved, otherwise `DRAFT`.
+- **Official pricing** (`ADMIN` only; administrators cannot price their own vehicles):
+  - Daily rate, delivery fee, and deposit as exact `Decimal` ZAR.
+  - Input limited to 2 decimal places and sane bounds; returned as exact strings.
+  - A change reason is required.
+  - Optional **scheduled** `effective_from`; no backdating; at most one price per vehicle per instant.
+- **Price history:** append-only rows recording who set each price, when, why, and when it takes effect. The `is_current` flag is shown. **A database trigger blocks UPDATE and DELETE on `vehicle_prices`.**
+- **Audit:** every price change is audited with the old and new values and the reason.
+- **Price calculation** (`app/services/pricing.py`):
+  - Every started 24 hours is one billable day.
+  - Rental = rate × days; total = rental + delivery; the deposit is a separate line.
+  - Rounded half-up to cents; `Decimal` throughout.
+  - Admin quote endpoint.
+- **Existing bookings keep their agreed price:** bookings store the full breakdown (Stage 04 schema), and prices cannot be edited.
+- **Public listing now also requires an official price already in effect.** Owners see their vehicle's current price read-only.
+- **Migration `5e999a61700a`:** vehicle suspension fields and their consistency CHECK (added by hand); a unique index on `(vehicle_id, effective_from)`; the append-only trigger.
+- **Migration template fix:** generated migrations no longer contain a stray blank line that failed Ruff.
+
+Files changed:
+- New:
+  - `backend/app/services/pricing.py`
+  - `backend/migrations/versions/2026_10_13_1248-5e999a61700a_add_vehicle_suspension_and_append_only_.py`
+  - Tests: `backend/tests/vehicles/test_pricing.py`
+- Modified:
+  - Backend: `app/models/vehicle.py`, `app/services/vehicles.py` (suspension, price-aware listing), `app/schemas/vehicles.py` (price and suspension schemas, `current_price`), `app/api/routes/admin_vehicles.py`
+  - Migrations: `migrations/script.py.mako`
+  - Tests: `tests/db/test_constraints.py` (price history is now fully append-only), `tests/vehicles/test_admin_review.py` (listing needs a price)
+  - Docs: `backend/README.md`, `docs/business-rules.md` (BR-3.2, BR-4.3, BR-4.7–4.11), `docs/requirements.md`, `docs/development-roadmap.md`, `README.md`
+
+Verification:
+- `pytest -ra`: **259 passed, 0 skipped, 0 failed** (40 new). Covered:
+  - **Calculation:** billable days (1 minute, exactly 24 h, 24 h + 1 s, 3 days + 1 h); invalid periods; exact breakdown; no float drift (0.10 × 3 = 0.30); half-up rounding.
+  - **Access:** only admins set or view price history (owner and renter 403); owners cannot smuggle prices through vehicle endpoints.
+  - **Validation:** 10 invalid inputs rejected (3 decimals, 0, negative, text, too large, negative fee, no reason, backdated, no timezone, currency field).
+  - **Audit and history:** old and new values with reason and actor; history order and `is_current`.
+  - **Scheduling:** a scheduled price does not apply early; duplicate instant rejected.
+  - **Bookings:** a booking made at R650 keeps R650 / R1950 / R2100 after the price rises to R999, while new quotes use R999.
+  - **Other:** quote needs a price; no self-pricing; a vehicle with only a future price is not listed.
+  - **Suspension:** suspend and reinstate flow and rules; unapproved vehicles reinstate to `DRAFT`.
+- Mutation checks: each of these changes made tests **fail**:
+  - price route opened to any user
+  - price audit removed
+  - partial days not billed
+  - banker's rounding
+  - deposit added to total
+  - backdating allowed
+  - self-pricing allowed
+  - future prices applied early
+  - listing price condition removed
+  - listing allowing future-only prices
+  - money precision validation removed
+  - The "future-only price" mutation was **not caught at first**, so a dedicated test was added.
+- Live end-to-end run (temporary database, real uvicorn and `curl`, then removed):
+  - Approved but unpriced → not listed; owner setting a price → 403; `480.005` → 422.
+  - Price R480/R120/R1500 → listed; scheduled R560 not current; owner sees R480.
+  - Quote for 3 days 2 hours → 4 days, R1920 + R120 = R2040 (deposit R1500 separate).
+  - **Direct `UPDATE` and `DELETE` on `vehicle_prices` through `psql` were both refused by the trigger.**
+  - Suspend → hidden and owner relist 409; reinstate → listed.
+  - Audit `price_set 480.00 → 560.00 (Summer)`.
+- `ruff check .` and `ruff format --check .` passed. `alembic check`: no drift. No new dependencies this stage.
+
+Outstanding limitations:
+- **Intermittent test failure:** one full-suite run in 10 reported `1 failed`. I didn't capture which test, and it did not recur in 9 consecutive runs. The likeliest candidate is the threaded double-booking test, which depends on timing. To investigate if it recurs (Stage 17).
+- VAT is not broken out (OPEN-6). Prices are a single VAT-inclusive amount.
+- No public quote endpoint yet; renters will get quotes in the marketplace and booking flows (Stages 09 and 10).
+- Suspending a vehicle does not yet affect existing bookings or notify anyone (Stages 10, 12, 16).
+- Price changes are not announced to owners (Stage 16).
+- Commission and owner payout split are not modelled (OPEN-1, Stage 11).
+
+Next stage:
+- Stage 09: Customer Marketplace.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -672,8 +755,9 @@ an access token from `POST /api/v1/auth/login`.
 Current endpoints: health; auth (register, login, refresh, logout, logout-all,
 verify-email, resend, password-reset request and confirm); `GET /users/me`;
 owner profile and vehicles (`/owners/me/...`: registration, photos, documents,
-submit and withdraw, listing, availability blocks); admin vehicle review
-(`/admin/vehicles`: queue, detail, audited document view, approve, reject); renter profile, date of birth, document upload and
+submit and withdraw, listing, availability blocks); admin vehicle management
+(`/admin/vehicles`: queue, detail, audited document view, approve, reject, suspend,
+reinstate, official price history, set price, quote); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -705,7 +789,8 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
-- No official pricing yet, so approved vehicles cannot be listed publicly until Stage 08 and 09.
+- No public marketplace API yet (Stage 09); prices are VAT-inclusive with no VAT breakdown (OPEN-6).
+- One unexplained intermittent test failure was seen in 10 full runs (see the Stage 08 summary).
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
@@ -713,14 +798,15 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 
 ## 19. Current Development Status
 
-Stages 01–07 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, renter eligibility, and owner vehicle registration (photos, documents, review workflow, availability), and 219 passing tests. Stage 08 has not started.
+Stages 01–08 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, renter eligibility, owner vehicle registration with administrator approval and suspension, and append-only administrator-controlled official pricing with exact price calculation, and 259 passing tests. Stage 09 has not started.
 
 ## 20. Next Stage
 
-**Stage 08: Administrator Pricing Management.** Administrator vehicle
-suspension and reinstatement; official rental prices (daily rate, delivery fee,
-deposit) set only by administrators; exact `Decimal` ZAR amounts; append-only
-price history recording who changed what and when (audited); the active price
-added to the public listing condition; price calculation logic with tests; and
-existing bookings keeping their agreed prices. Open decision OPEN-6 (VAT
-registration) affects how prices are displayed. Waiting for owner approval to begin.
+**Stage 09: Customer Marketplace.** Public marketplace API built on
+`publicly_listed_vehicles()`: vehicle list with search and filters (city,
+province, transmission, fuel, seats, price range), vehicle details, public photo
+access for listed vehicles only, official prices, privacy-limited owner
+information (first name and area), availability display, and quotes for chosen
+dates. Then connect the mobile app's Home and Vehicle details screens to it
+(replacing the prototype sample data), with loading, empty, and error states.
+Waiting for owner approval to begin.

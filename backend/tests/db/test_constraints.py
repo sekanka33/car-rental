@@ -171,11 +171,25 @@ def test_invalid_prices_rejected(db_session: Session, overrides: dict) -> None:
             create_price(db_session, vehicle, **overrides)
 
 
-def test_price_history_cannot_be_deleted_while_referenced(db_session: Session) -> None:
-    price = create_price(db_session, create_vehicle(db_session))
-    create_booking(db_session, price)
+def test_price_history_is_append_only(db_session: Session) -> None:
+    """Prices can never be edited or deleted, referenced by a booking or not."""
+    referenced = create_price(db_session, create_vehicle(db_session))
+    create_booking(db_session, referenced)
+    unreferenced = create_price(db_session, create_vehicle(db_session))
 
-    assert_rejected(db_session, "DELETE FROM vehicle_prices WHERE id = :id", {"id": price.id})
+    for price in (referenced, unreferenced):
+        assert_rejected(
+            db_session,
+            "UPDATE vehicle_prices SET daily_rate = 1 WHERE id = :id",
+            {"id": price.id},
+            error=DBAPIError,
+        )
+        assert_rejected(
+            db_session,
+            "DELETE FROM vehicle_prices WHERE id = :id",
+            {"id": price.id},
+            error=DBAPIError,
+        )
 
 
 # --- bookings ---------------------------------------------------------------
