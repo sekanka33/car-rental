@@ -24,6 +24,12 @@ PUBLIC_ENDPOINTS = {
     ("POST", "/api/v1/auth/verify-email"),
     ("POST", "/api/v1/auth/password-reset/request"),
     ("POST", "/api/v1/auth/password-reset/confirm"),
+    # Public marketplace (Stage 09): listed vehicles only.
+    ("GET", "/api/v1/vehicles"),
+    ("GET", "/api/v1/vehicles/{vehicle_id}"),
+    ("GET", "/api/v1/vehicles/{vehicle_id}/photos/{photo_id}"),
+    ("GET", "/api/v1/vehicles/{vehicle_id}/availability"),
+    ("GET", "/api/v1/vehicles/{vehicle_id}/quote"),
 }
 
 

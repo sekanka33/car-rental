@@ -194,6 +194,32 @@ read-only (`current_price`) and cannot send price fields anywhere.
 - Calculation (`app/services/pricing.py`): every started 24 hours is one billable day; `rental = daily_rate × days`; `total = rental + delivery_fee`; the deposit is a separate line. Amounts are rounded half-up to cents.
 - Bookings copy the full breakdown (`vehicle_price_id`, rates, days, amounts), so later price changes never affect them (Stage 10 creates bookings from this calculation).
 
+### Public marketplace (no login)
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/vehicles` | Search listed vehicles. Filters: `q` (make/model/city), `city`, `province`, `transmission`, `fuel_type`, `min_seats`, `min_daily_rate`, `max_daily_rate`, `available_from` + `available_to`; `sort` = `price_asc` / `price_desc` / `newest`; `limit` ≤ 50, `offset` |
+| `GET /api/v1/vehicles/{id}` | Details with photo URLs |
+| `GET /api/v1/vehicles/{id}/photos/{photo_id}` | Photo bytes (only while the vehicle is listed) |
+| `GET /api/v1/vehicles/{id}/availability?start_at=&end_at=` | Booked or blocked periods, merged (default: next 60 days; at most 180) |
+| `GET /api/v1/vehicles/{id}/quote?start_at=&end_at=` | Official price breakdown and `available` for the period (future, at most 90 days). Not a booking |
+
+Every endpoint starts from `publicly_listed_vehicles()`, so anything not approved, compliant,
+priced and owned by an active account returns 404, photos included. Responses never include
+the VIN, registration number, owner surname, contact details or documents. Owners appear as
+first name plus the vehicle's area. Availability never reveals reasons or renters.
+
+### Development demo data
+
+```bash
+APP_ENV=development python -m app.cli seed-demo-data
+```
+
+This creates 6 approved, priced demo vehicles with generated placeholder photos, owned by
+`demo-owner-N@example.com` accounts whose passwords are random and unknown (they cannot log
+in). Descriptions start with "DEMO LISTING". It is refused unless `APP_ENV=development`, and
+running it again changes nothing. Prices are set through the normal audited pricing service.
+
 ### Creating an administrator
 
 Administrators cannot register through the API. An operator with database access runs:
@@ -264,18 +290,19 @@ app/
 │   ├── security.py    # Argon2id hashing, JWT access tokens, random token helpers
 │   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
 │   └── logging.py
-├── cli.py             # Operator commands (create-admin)
+├── cli.py             # Operator commands (create-admin, seed-demo-data)
+├── demo_data.py       # DEVELOPMENT-ONLY demo marketplace data
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, customers, admin_* , health
+│   └── routes/        # auth, users, owners, owner_vehicles, customers, marketplace, admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

@@ -62,6 +62,21 @@ def create_admin_command(
     return 0
 
 
+def seed_demo_command(session: Session, settings) -> int:
+    from app.demo_data import DemoDataRefusedError, seed_demo_data
+    from app.integrations.storage import LocalDocumentStorage
+
+    try:
+        created = seed_demo_data(
+            session, settings, LocalDocumentStorage(settings.document_storage_dir)
+        )
+    except DemoDataRefusedError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Demo data: {created} vehicles created." if created else "Demo data already present.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -70,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     admin.add_argument("--full-name", required=True)
     admin.add_argument(
         "--password-stdin", action="store_true", help="Read the password from standard input"
+    )
+    commands.add_parser(
+        "seed-demo-data",
+        help="DEVELOPMENT ONLY: create demo owners, approved vehicles, photos and prices",
     )
     args = parser.parse_args(argv)
 
@@ -80,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     engine = build_engine(settings.database_url.get_secret_value())
     try:
         with build_session_factory(engine)() as session:
+            if args.command == "seed-demo-data":
+                return seed_demo_command(session, settings)
             return create_admin_command(
                 session,
                 email=args.email,

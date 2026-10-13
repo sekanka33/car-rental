@@ -7,6 +7,7 @@ from app.api.routes import (
     auth,
     customers,
     health,
+    marketplace,
     owner_vehicles,
     owners,
     users,
@@ -22,3 +23,4 @@ api_router.include_router(customers.router)
 api_router.include_router(admin_verifications.router)
 api_router.include_router(owner_vehicles.router)
 api_router.include_router(admin_vehicles.router)
+api_router.include_router(marketplace.router)

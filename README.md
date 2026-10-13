@@ -4,12 +4,13 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–08 complete. The mobile app foundation runs with
-> **prototype sample data** (not yet connected to the API). The FastAPI backend runs
-> on PostgreSQL with authentication, role-based access control, renter eligibility,
-> owner vehicle registration with administrator approval and suspension, and
-> administrator-controlled official pricing. The public marketplace API, bookings,
-> and payments are not built yet. Commands for
+> **Current state:** Stages 01–09 complete. The mobile app's marketplace (Home and
+> Vehicle details) now shows **real vehicles and official prices from the backend**.
+> Login, registration and the profile screen are still UI-only until the app is
+> connected to authentication. The FastAPI backend runs on PostgreSQL with
+> authentication, role-based access control, renter eligibility, owner vehicle
+> registration with administrator approval, official pricing, and a public
+> marketplace API. Bookings and payments are not built yet. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
 ---
@@ -37,7 +38,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 
 | Area | Technology |
 |------|------------|
-| Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, ESLint 9 (`eslint-config-expo`). Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
+| Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, expo-image, ESLint 9 (`eslint-config-expo`), Jest 29 + jest-expo 57 + React Native Testing Library 14. Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
 | Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
 | Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
@@ -77,7 +78,8 @@ car-rental/
 ├── mobile/                 # Expo app (Stage 02) — see mobile/README.md
 │   ├── src/app/            # Expo Router screens
 │   ├── src/components/     # Reusable UI components
-│   ├── src/data/           # PROTOTYPE sample data (removed in Stage 09)
+│   ├── src/services/       # Backend API calls (marketplace)
+│   ├── __tests__/          # Jest tests
 │   └── tailwind.config.js  # Theme tokens
 ├── backend/                # FastAPI service (Stage 03) — see backend/README.md
 │   ├── app/                # main.py, cli.py, core/, api/, db/, models/, repositories/, services/, integrations/, schemas/
@@ -108,7 +110,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 06 | Customer Eligibility and Document Verification | [x] COMPLETE | pytest 179/179, 8 mutation checks, live upload/review E2E, fresh-venv install |
 | 07 | Owner Profiles and Vehicle Registration | [x] COMPLETE | pytest 219/219, 9 mutation checks, live owner→admin E2E |
 | 08 | Administrator Pricing Management | [x] COMPLETE | pytest 259/259, 11 mutation checks, live E2E incl. direct-SQL tamper test |
-| 09 | Customer Marketplace | NOT STARTED | Not tested |
+| 09 | Customer Marketplace | [x] COMPLETE | backend pytest 293/293; mobile jest 19/19; app↔API browser E2E 24/24; 13 + 5 mutation checks |
 | 10 | Booking and Availability | NOT STARTED | Not tested |
 | 11 | Payment Integration | NOT STARTED | Not tested |
 | 12 | Delivery Management | NOT STARTED | Not tested |
@@ -614,6 +616,100 @@ Outstanding limitations:
 Next stage:
 - Stage 09: Customer Marketplace.
 
+### Stage 09: Customer Marketplace
+
+Status: COMPLETE (2026-10-13)
+
+Implemented:
+
+**Backend (public, no login):**
+- `GET /api/v1/vehicles`:
+  - Search by make, model or city (case-insensitive; LIKE wildcards escaped).
+  - Filters: city, province, transmission, fuel, minimum seats, minimum/maximum daily rate, and free between `available_from` and `available_to` (excludes reserving bookings and owner blocks).
+  - Sorting (price ascending/descending, newest) and pagination with a total count.
+- `GET /api/v1/vehicles/{id}`: details with photo URLs.
+- Public photo endpoint, which serves photos **only while the vehicle is listed**.
+- Availability: merged booked or blocked periods, with no reasons or renter data.
+- Quote: official price breakdown plus whether the vehicle is free for the period.
+- Everything is built on `publicly_listed_vehicles()` joined to the official price in effect, so unlisted vehicles return 404 everywhere.
+- **Privacy:** no VIN, registration, owner surname, contact details or documents. The owner appears as first name and area only.
+- **Development-only demo data:** `python -m app.cli seed-demo-data` creates 6 vehicles with generated placeholder photos and demo accounts that cannot log in. It is refused unless `APP_ENV=development` and is idempotent.
+- The 5 public endpoints are added to the anonymous-access test's explicit public allow-list.
+
+**Mobile:**
+- API client (`src/lib/api.ts`):
+  - Base URL from `EXPO_PUBLIC_API_URL`, with a 15 s timeout.
+  - Backend error envelope → `ApiError` (`status`, `code`, `message`); friendly network and timeout messages.
+- **The prototype vehicle data is removed.** Home and Vehicle details use `/api/v1/vehicles`. The profile placeholder remains (moved to `src/data/sample-profile.ts`, labelled) until Stage 14.
+- **Home:**
+  - Debounced server-side search; filter chips for gearbox, fuel and maximum price; sort chips.
+  - Result count, pull-to-refresh, infinite scroll; stale responses are ignored.
+  - Loading, empty ("Clear filters") and error ("Try again") states.
+- **Vehicle details:**
+  - Real photo carousel (expo-image, placeholder on failure).
+  - Specs and description.
+  - **Official pricing breakdown** (daily rate, delivery fee, deposit; ZAR, VAT-inclusive).
+  - Unavailable dates (South African time).
+  - Owner first name and area.
+  - 404 → "Vehicle not found"; booking still disabled until Stage 10.
+- **Mobile automated tests (new):** Jest with jest-expo 57 and React Native Testing Library 14, covering the API client, formatting, and the Home and Details screens with mocked services.
+
+Files changed:
+- Backend:
+  - New: `app/services/marketplace.py`, `app/schemas/marketplace.py`, `app/api/routes/marketplace.py`, `app/demo_data.py`
+  - New tests: `tests/marketplace/` (factory plus 30 tests), `tests/test_demo_data.py`
+  - Modified: `app/cli.py`, `app/api/router.py`, `tests/auth/test_access_control.py`
+- Mobile:
+  - New: `src/lib/api.ts`, `src/hooks/use-vehicle-search.ts`, `src/hooks/use-debounced-value.ts`, `src/components/ui/chip.tsx`
+  - New tests and config: `__tests__/` (4 test files, fixtures, type reference), `jest.setup.ts`, `.env.example`
+  - Rewritten: `src/types/vehicle.ts`, `src/services/vehicles.ts`, `src/app/(tabs)/home.tsx`, `src/app/vehicles/[id].tsx`, `src/components/vehicle-card.tsx`, `src/components/vehicle-photo.tsx`
+  - Modified: `src/lib/format.ts` (date ranges), `src/app/(tabs)/profile.tsx`, `package.json`, `package-lock.json`, `README.md`
+  - Moved: `src/data/sample-vehicles.ts` → `src/data/sample-profile.ts` (vehicles removed)
+- Docs: `README.md`, `backend/README.md`, `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **293 passed, 0 skipped, 0 failed** (34 new). Covered:
+  - Only listed vehicles are visible: draft, pending, rejected, unavailable, suspended, unpriced, expired insurance and suspended owner → 404 for details, photos and availability.
+  - Privacy: no VIN, registration, surname or email in responses.
+  - Price shown is the one in effect (a scheduled price is not shown early).
+  - Text search including literal `%` and `_`; 9 filter and sort combinations; invalid filters → 422; pagination.
+  - Availability filter with a booking and a block; details and public photos (cache header; a photo id works only with its own vehicle).
+  - Merged availability without reasons; quote breakdown and availability; quote period validation; released bookings do not block.
+  - Demo data refused outside development, real PNG photos, listed, idempotent.
+  - Ruff and `alembic check` clean.
+- **Backend mutation checks:** each of these changes made tests **fail**:
+  - listing filter bypassed
+  - future price shown
+  - owner full name exposed
+  - LIKE wildcards not escaped
+  - availability filter ignored
+  - photo not tied to its vehicle
+  - cancelled bookings blocking availability
+  - past quotes allowed
+
+  The cancelled-bookings mutation was **not caught at first**, so a test was added.
+- **Mobile:** `npm test` **19 passed** (4 suites); `npm run typecheck` 0 errors; `npm run lint` clean; `npx expo-doctor` 21/21.
+- **Mobile mutation checks:** each of these made tests **fail**: filters not sent, error code not mapped, empty parameters sent, 404 shown as a generic error, retry doing nothing.
+- **App ↔ API end-to-end** (throwaway database seeded with demo data, real uvicorn, Expo web pointed at it through `EXPO_PUBLIC_API_URL`, headless Chromium at 390×844): **24/24 checks passed.**
+  - Home: 6 vehicles from the API shown by name; cheapest first, R 390.00 matching the API; **6 real photos loaded from the API**.
+  - Search and filters: "toyota" → 2; Manual → 3; Manual + up to R500 → 2; Electric → empty state; clear filters → 6.
+  - Details: R 390.00 / R 150.00 / R 2 000.00; "Johan · Gqeberha"; availability shown; VIN absent; unknown vehicle → "Vehicle not found"; no page errors.
+  - **API stopped → "Could not reach the server" error state; API restarted → "Try again" loads the list.**
+  - Everything was removed afterwards.
+- While testing I found an existing `expo start` on port 8081 (running for about 3 hours, not started by me). I left it untouched and used port 8082.
+
+Outstanding limitations:
+- **Not run on a physical device or emulator** (no emulator on this machine). The web build was verified. For Expo Go on a phone, set `EXPO_PUBLIC_API_URL` to the computer's LAN IP (see `mobile/README.md`).
+- The app is not yet connected to authentication: login, registration and the profile remain UI-only (Stage 14 wires accounts, documents and dashboards; tokens go in `expo-secure-store`).
+- No date picker or quote in the app yet. Date selection and booking come in Stage 10; the quote API already exists.
+- Four rows of filter chips take about a third of a small screen; a collapsible filter sheet would be better.
+- Public photos are served by the API itself (with a 5-minute cache), not a CDN; image resizing and thumbnails are not implemented.
+- No rate limiting on the public endpoints (Stage 17).
+- **Mobile `npm audit`:** 6 root advisories (`braces`, `decode-uri-component`, `node-forge`, `postcss-selector-parser`, `uuid`, and newly `sprintf-js`), all in Expo CLI, build and test tooling, not app runtime code. The counted total rose because the new Jest tooling adds more copies of the same packages. Review in Stage 17.
+
+Next stage:
+- Stage 10: Booking and Availability.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -696,8 +792,11 @@ npm start          # Expo dev server; scan the QR code with Expo Go, or press:
 npm run web        # open directly in the browser
 ```
 
-The app currently uses **prototype sample data** and has no real sign-in. See
-[mobile/README.md](mobile/README.md) for the folder structure. Add packages with
+The marketplace screens load vehicles from the backend, so start the API first. For
+demo listings run `APP_ENV=development python -m app.cli seed-demo-data` in `backend/`.
+Copy `mobile/.env.example` to `mobile/.env` and set `EXPO_PUBLIC_API_URL` (default
+`http://localhost:8000`; use the computer's LAN IP for a physical phone). Sign-in is not
+connected yet. See [mobile/README.md](mobile/README.md). Add packages with
 `npx expo install <package>` so versions stay compatible with SDK 57.
 
 ## 13. Running the Python Backend
@@ -722,6 +821,7 @@ Mobile:
 
 ```bash
 cd mobile
+npm test            # Jest (jest-expo + React Native Testing Library)
 npm run typecheck   # TypeScript (tsc --noEmit)
 npm run lint        # ESLint (expo lint)
 npx expo-doctor     # dependency / SDK compatibility
@@ -757,7 +857,8 @@ verify-email, resend, password-reset request and confirm); `GET /users/me`;
 owner profile and vehicles (`/owners/me/...`: registration, photos, documents,
 submit and withdraw, listing, availability blocks); admin vehicle management
 (`/admin/vehicles`: queue, detail, audited document view, approve, reject, suspend,
-reinstate, official price history, set price, quote); renter profile, date of birth, document upload and
+reinstate, official price history, set price, quote); **public marketplace**
+(`/vehicles`: search and filters, details, photos, availability, quote); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -789,24 +890,24 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
-- No public marketplace API yet (Stage 09); prices are VAT-inclusive with no VAT breakdown (OPEN-6).
+- Prices are VAT-inclusive with no VAT breakdown (OPEN-6). The public marketplace has no rate limiting yet (Stage 17).
 - One unexplained intermittent test failure was seen in 10 full runs (see the Stage 08 summary).
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
-- Mobile app: not yet run on a physical device or emulator (bundles compile; web verified). Login and registration are UI-only. Data is prototype sample data.
-- Mobile `npm audit`: 36 advisories in Expo build tooling (not app runtime). Deferred to Stage 17; `--force` fix would downgrade Expo.
+- Mobile app: not yet run on a physical device or emulator (web verified against the real API). Login, registration and profile are UI-only until Stage 14; the marketplace uses real backend data.
+- Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–08 are COMPLETE. The mobile app foundation runs with prototype data. The backend runs on PostgreSQL 16 with authentication and authorisation, renter eligibility, owner vehicle registration with administrator approval and suspension, and append-only administrator-controlled official pricing with exact price calculation, and 259 passing tests. Stage 09 has not started.
+Stages 01–09 are COMPLETE. The backend (PostgreSQL 16) provides authentication and authorisation, renter eligibility, owner vehicle registration with approval and suspension, official pricing, and a public marketplace API, with 293 passing tests. The mobile marketplace screens use real backend data, with 19 passing mobile tests. Stage 10 has not started.
 
 ## 20. Next Stage
 
-**Stage 09: Customer Marketplace.** Public marketplace API built on
-`publicly_listed_vehicles()`: vehicle list with search and filters (city,
-province, transmission, fuel, seats, price range), vehicle details, public photo
-access for listed vehicles only, official prices, privacy-limited owner
-information (first name and area), availability display, and quotes for chosen
-dates. Then connect the mobile app's Home and Vehicle details screens to it
-(replacing the prototype sample data), with loading, empty, and error states.
-Waiting for owner approval to begin.
+**Stage 10: Booking and Availability.** Rental date selection; booking creation
+with backend eligibility checks (Stage 06) and backend price calculation
+(Stage 08); temporary `PENDING_PAYMENT` holds with expiry (marking stale holds
+`EXPIRED` before availability checks); overlap prevention (database exclusion
+constraint and concurrency tests); cancellation; booking history; the stored
+price breakdown; and enforced status transitions. Open decision OPEN-2
+(cancellation and refund policy) affects cancellation rules. Waiting for owner
+approval to begin.

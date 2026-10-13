@@ -1,14 +1,22 @@
-/**
- * Vehicle data access. Stage 02 reads PROTOTYPE sample data; Stage 09 replaces
- * these functions with calls to the FastAPI backend, keeping the same signatures.
- */
-import { SAMPLE_VEHICLES } from '@/data/sample-vehicles';
-import type { Vehicle } from '@/types/vehicle';
+/** Marketplace data from the FastAPI backend (/api/v1/vehicles). */
+import { apiGet } from '@/lib/api';
+import type {
+  Availability,
+  MarketplaceVehicleDetail,
+  SearchFilters,
+  SearchResponse,
+} from '@/types/vehicle';
 
-export async function listVehicles(): Promise<Vehicle[]> {
-  return SAMPLE_VEHICLES;
+export const PAGE_SIZE = 20;
+
+export function searchVehicles(filters: SearchFilters, offset = 0): Promise<SearchResponse> {
+  return apiGet<SearchResponse>('/api/v1/vehicles', { ...filters, limit: PAGE_SIZE, offset });
 }
 
-export async function getVehicle(id: string): Promise<Vehicle | null> {
-  return SAMPLE_VEHICLES.find((vehicle) => vehicle.id === id) ?? null;
+export function getVehicle(id: string): Promise<MarketplaceVehicleDetail> {
+  return apiGet<MarketplaceVehicleDetail>(`/api/v1/vehicles/${encodeURIComponent(id)}`);
+}
+
+export function getAvailability(id: string): Promise<Availability> {
+  return apiGet<Availability>(`/api/v1/vehicles/${encodeURIComponent(id)}/availability`);
 }

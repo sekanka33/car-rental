@@ -4,18 +4,18 @@ import { Pressable, Text, View } from 'react-native';
 
 import { COLORS } from '@/constants/brand';
 import { formatTransmission, formatZar } from '@/lib/format';
-import type { Vehicle } from '@/types/vehicle';
+import type { MarketplaceVehicle } from '@/types/vehicle';
 
 import { VehiclePhoto } from './vehicle-photo';
 
-export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
+export function VehicleCard({ vehicle }: { vehicle: MarketplaceVehicle }) {
   const title = `${vehicle.make} ${vehicle.model}`;
   return (
     <Link href={{ pathname: '/vehicles/[id]', params: { id: vehicle.id } }} asChild>
       <Pressable
-        accessibilityLabel={`${title}, ${formatZar(vehicle.dailyRate)} per day`}
+        accessibilityLabel={`${title}, ${formatZar(vehicle.price.daily_rate)} per day`}
         className="mb-4 rounded-2xl border border-surface-border bg-white p-3 active:opacity-80">
-        <VehiclePhoto />
+        <VehiclePhoto url={vehicle.primary_photo_url} accessibilityLabel={title} />
         <View className="mt-3 flex-row items-start justify-between">
           <View className="flex-1 pr-3">
             <Text className="text-lg font-semibold text-ink">{title}</Text>
@@ -24,7 +24,7 @@ export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
             </Text>
           </View>
           <View className="items-end">
-            <Text className="text-lg font-bold text-brand-600">{formatZar(vehicle.dailyRate)}</Text>
+            <Text className="text-lg font-bold text-brand-600">{formatZar(vehicle.price.daily_rate)}</Text>
             <Text className="text-xs text-ink-muted">per day</Text>
           </View>
         </View>

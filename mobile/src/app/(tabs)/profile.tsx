@@ -5,7 +5,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
 import { Screen } from '@/components/ui/screen';
-import { SAMPLE_CUSTOMER_PROFILE } from '@/data/sample-vehicles';
+import { SAMPLE_CUSTOMER_PROFILE } from '@/data/sample-profile';
 import type { VerificationStatus } from '@/types/profile';
 
 const STATUS_DISPLAY: Record<VerificationStatus, { label: string; tone: BadgeTone }> = {
