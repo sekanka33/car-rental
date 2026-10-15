@@ -20,7 +20,7 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 | 11 | Payment Integration | [x] COMPLETE | 10 |
 | 12 | Delivery Management | [x] COMPLETE | 11 |
 | 13 | Google Maps and Live Tracking | [x] COMPLETE | 12 |
-| 14 | Customer and Owner Dashboards | NOT STARTED | 13 |
+| 14 | Customer and Owner Dashboards | [x] COMPLETE | 13 |
 | 15 | Administrator Dashboard | NOT STARTED | 14 |
 | 16 | Notifications and Communication | NOT STARTED | 15 |
 | 17 | Security, Testing, and Quality Assurance | NOT STARTED | 16 |

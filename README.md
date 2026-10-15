@@ -4,12 +4,13 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–13 complete. Renters can register and log in in the
+> **Current state:** Stages 01–14 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
 > car and pay for it** (Paystack checkout, verified by the backend), follow its
 > **delivery live on a map with an ETA**, confirm the handover and say when they are ready to return it. Owners
-> share their location from the app while on the way, and handle the rest of the delivery
-> (scheduling, handover and return records with photos, problem reports) through the API; administrators reassign and resolve failed deliveries. Payments run in **test
+> register and manage their cars, documents and blocked dates, run the whole delivery and
+> return from the app, and see their bookings and gross earnings; renters verify their
+> identity in the app and see their payment history. Administrators reassign and resolve failed deliveries (web dashboard in Stage 15). Payments run in **test
 > mode only** until live keys are approved. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
@@ -115,7 +116,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 11 | Payment Integration | [x] COMPLETE | backend 476/476; mobile 40/40; 9/10 mutations caught (1 equivalent); live E2E 16/16 against a Paystack stand-in |
 | 12 | Delivery Management | [x] COMPLETE | backend 533/533; mobile 44/44; 15/17 mutations caught (2 equivalent); live E2E 20/20 |
 | 13 | Google Maps and Live Tracking | [x] COMPLETE | backend 572/572; mobile 54/54; 18/18 mutations caught (3 gaps closed); live E2E 47/47 |
-| 14 | Customer and Owner Dashboards | NOT STARTED | Not tested |
+| 14 | Customer and Owner Dashboards | [x] COMPLETE | backend 583/583; mobile 89/89; 23/24 mutations caught (1 equivalent); API E2E 39/39; browser E2E 25/25 |
 | 15 | Administrator Dashboard | NOT STARTED | Not tested |
 | 16 | Notifications and Communication | NOT STARTED | Not tested |
 | 17 | Security, Testing, and Quality Assurance | NOT STARTED | Not tested |
@@ -1001,6 +1002,57 @@ Outstanding limitations:
 Next stage:
 - Stage 14: Customer and Owner Dashboards.
 
+### Stage 14: Customer and Owner Dashboards
+
+Status: COMPLETE (2026-10-15)
+
+Decision: **owner earnings are shown gross** (your choice, while OPEN-1 is open): money received for bookings of the owner's cars minus refunds, before any platform commission, and labelled that way in the app.
+
+Implemented:
+
+**Backend** (read-only, `app/services/dashboards.py`, `app/api/routes/dashboards.py`):
+- `GET /owners/me/dashboard`: cars per status, upcoming bookings and rentals under way, deliveries and returns still to do (only those assigned to the owner), gross this month and year, licence discs and insurance of listed cars expiring within 30 days, and the next booking.
+- `GET /owners/me/bookings?scope=upcoming|active|past|all`: paid-for bookings of the owner's cars (unpaid and expired holds are left out), with the delivery's id and status, and the renter's **first name only**.
+- `GET /owners/me/earnings?year=`: gross per booking and per month of the rental start (SA time). Only money actually received counts; pending and processed refunds are deducted, failed ones are not.
+- `GET /customers/me/payments`: the renter's payment attempts across all bookings, with refunds, booking reference and car.
+
+**Mobile:**
+- **Tabs follow the roles:** renters get **Bookings**, owners get **My cars**; an account with both roles gets both.
+- **Renter dashboard (Bookings tab):** "Needs your attention" (pay for a held booking, confirm you have the car, verify your identity unless approved or under review), then Now, Upcoming and Past, and **Payment history**.
+- **Verify your identity** (from the dashboard or Profile): date of birth, then the SA ID and driving licence with front and optional back, from the camera or a file. The reviewer's note is shown when a document is rejected.
+- **Owner dashboard (My cars tab):** collected this month and this year (before commission), upcoming, on the road and listed counts, and what needs doing (deliveries, returns, expiring documents, rejected cars, drafts).
+- **My cars:** register a car (no price fields), add 3–12 photos and the required documents (expiry date for licence disc and insurance), submit for review, withdraw, hide or list again, edit (only changed fields are sent, so a colour change never triggers a review), delete a draft, and **blocked dates** (whole days, SA time).
+- **Bookings of my cars** (upcoming, on the road, past) and **Earnings** (by year, a per-month bar chart and a per-booking list).
+- **Owner delivery screen, now complete:** pick a time (the start, or 1, 2, 3 or 24 hours before), set off, share location, record the handover with photos, record the return (odometer not below the handover) with photos, report a problem, and call the renter.
+- Uploads use `expo-image-picker` and `expo-document-picker` (new dependencies) as multipart forms; private photos load with the access token.
+
+Files changed:
+- Backend:
+  - New: `app/services/dashboards.py`, `app/schemas/dashboards.py`, `app/api/routes/dashboards.py`, `tests/dashboards/`
+  - Modified: `app/api/router.py`
+- Mobile:
+  - New: `src/app/(tabs)/owner.tsx`, `src/app/owner/` (vehicles list, new, `[id]/index`, `[id]/edit`, `[id]/availability`, bookings, earnings), `src/app/verification.tsx`, `src/app/payments/index.tsx`, `src/components/{dashboard,vehicle-form,private-image,pick-image-buttons}.tsx`, `src/hooks/use-reload-on-focus.ts`, `src/lib/{upload,labels,owner,renter,form-errors}.ts`, `src/services/owner.ts`, `src/types/owner.ts`, `__tests__/{owner-screens,renter-screens,dashboard-logic}.test.ts(x)`
+  - Changed: `src/app/(tabs)/{_layout,bookings,profile}.tsx`, `src/app/_layout.tsx`, `src/app/deliveries/{index,[id]}.tsx`, `src/lib/api.ts` (multipart uploads), `src/services/{customers,owner-deliveries}.ts`, `src/types/{payment,profile}.ts`, `src/constants/brand.ts`, `app.json` (image picker permission text), `package.json`, `__tests__/{api,booking-flow}.test.ts(x)`
+- Docs: all READMEs, `docs/business-rules.md` (BR-6.12), `docs/requirements.md` (OPEN-1), `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **583 passed, 0 failed** (11 new): owner isolation, paid-only visibility, first name only, booking scopes and order, linked delivery, role checks, earnings arithmetic (failed payments, pending/processed/failed refunds, other years, other owners), month by SA time (31 Jan 23:30 UTC counts as February), dashboard counts including a reassigned delivery, expiring documents, empty dashboard, renter payment isolation. Ruff, format and `alembic check` clean (no schema change in this stage).
+- **Mobile** `npm test`: **89 passed** (35 new) across owner screens, renter screens and the logic behind them; typecheck 0 errors; lint clean; web, Android and iOS bundles export.
+- **Mutation checks: 23 of 24 caught.** The one gap found (deliveries reassigned to someone else counted as the owner's to-do) was closed with a new test. The survivor is equivalent: a booking cannot be handed over unless its delivery is delivered.
+- **Live API end to end, 39/39** (real uvicorn, throwaway database): an owner registers a car through the API, is refused submission until photos and documents are in, is approved, sees the licence disc flagged as expiring, blocks a day (hidden in the marketplace); a renter verifies through the multipart endpoints and books twice; the owner's bookings, dashboard counts and earnings follow every step of a full delivery and return; a refund is deducted from earnings and appears in the renter's history; owners and renters cannot see each other's views, and another owner sees nothing.
+- **Browser end to end, 25/25** (the exported web app in headless Chromium against the real API): role-based tabs; owner dashboard, earnings and bookings; registering a car and uploading 3 photos and 3 documents through the browser file picker; submitting for review; scheduling, setting off, recording the handover and adding a photo; the renter's dashboard asking to confirm receipt, payment history and verified status; no page errors.
+- **Problems found and fixed during the stage:** the dashboard to-do count test did not cover reassigned deliveries (mutation check); route files exported helpers, which were moved to `src/lib/` per the project's Expo Router rule; render-time `Date.now()` calls flagged by the React lint rules were moved to state captured when the screen opens.
+
+Outstanding limitations:
+- **Not yet run on a physical phone or emulator.** Camera capture, the native photo library and document picker, and the Call button were verified only by component tests; the browser run used the file picker.
+- Earnings are gross only; commission and payouts wait for OPEN-1. There is no CSV or statement export.
+- Dates are typed as YYYY-MM-DD (no calendar picker yet).
+- Owners cannot reorder photos or edit their owner profile (business name, city) in the app; both remain API-only.
+- No notifications when something needs attention (Stage 16); the dashboards refresh on pull and when a screen comes back into view.
+
+Next stage:
+- Stage 15: Administrator Dashboard.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -1198,18 +1250,18 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - The intermittent test failure seen in Stage 08 has been traced to two causes and fixed in Stage 10 (see its summary); the suite then passed 5 full runs in a row.
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
-- Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload screens come in Stage 14. On web, session tokens are kept in `localStorage` (development preview only).
+- Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload and owner screens exist since Stage 14 (web-verified only). On web, session tokens are kept in `localStorage` (development preview only).
 - Payments are tested with test doubles and a local Paystack stand-in, not yet against the real Paystack sandbox (no test keys yet). Schedule `python -m app.cli expire-holds`, `python -m app.cli reconcile-payments` and `python -m app.cli purge-locations` in production.
 - Live tracking runs in one API process (in-memory broadcaster) and has not yet been tried with real Google keys or on a device.
 - Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–13 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation), Paystack payments (verified checkout, idempotent webhooks, refunds, reconciliation), deliveries (owner scheduling, handover and return records with photos, exceptions, admin reassignment and rescheduling) and live tracking (location updates, WebSocket push, Google ETA, retention), with 572 passing tests. The mobile app has real accounts, the marketplace, booking, payment, delivery progress with a live map and handover confirmation, My bookings, and owner location sharing, with 54 passing tests.
+Stages 01–14 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings, Paystack payments, deliveries, live tracking and the dashboard views (owner bookings, earnings and summary; renter payment history), with 583 passing tests. The mobile app covers the renter journey (marketplace, booking, payment, identity verification, live delivery, dashboard and payment history) and the owner journey (dashboard, car registration with photos and documents, blocked dates, deliveries and returns, bookings, earnings), with 89 passing tests.
 
 ## 20. Next Stage
 
-**Stage 14: Customer and Owner Dashboards.** Mobile dashboards for bookings, payments,
-deliveries, verification, owner vehicles, availability and earnings, including the owner
-delivery screens still missing (scheduling, handover and return with photos) and in-app
-document upload. Waiting for owner approval to begin.
+**Stage 15: Administrator Dashboard.** A React + TypeScript + Tailwind web app in
+`admin-dashboard/` covering the admin workflows (verification review, vehicle approval and
+pricing, bookings, payments and refunds, deliveries and exceptions, users, audit log), with
+charts drawn from real aggregates. Waiting for owner approval to begin.

@@ -10,6 +10,7 @@ from app.api.routes import (
     auth,
     bookings,
     customers,
+    dashboards,
     health,
     live,
     marketplace,
@@ -38,3 +39,4 @@ api_router.include_router(admin_payments.router)
 api_router.include_router(owner_deliveries.router)
 api_router.include_router(admin_deliveries.router)
 api_router.include_router(live.router)
+api_router.include_router(dashboards.router)

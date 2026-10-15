@@ -28,6 +28,15 @@ export default function RootLayout() {
         <Stack.Screen name="payments/return" options={{ title: 'Payment' }} />
         <Stack.Screen name="deliveries/index" options={{ title: 'My deliveries' }} />
         <Stack.Screen name="deliveries/[id]" options={{ title: 'Delivery' }} />
+        <Stack.Screen name="payments/index" options={{ title: 'Payment history' }} />
+        <Stack.Screen name="verification" options={{ title: 'Verify your identity' }} />
+        <Stack.Screen name="owner/vehicles/index" options={{ title: 'My cars' }} />
+        <Stack.Screen name="owner/vehicles/new" options={{ title: 'Register a car' }} />
+        <Stack.Screen name="owner/vehicles/[id]/index" options={{ title: 'Car' }} />
+        <Stack.Screen name="owner/vehicles/[id]/edit" options={{ title: 'Edit car' }} />
+        <Stack.Screen name="owner/vehicles/[id]/availability" options={{ title: 'Blocked dates' }} />
+        <Stack.Screen name="owner/bookings" options={{ title: 'Bookings of my cars' }} />
+        <Stack.Screen name="owner/earnings" options={{ title: 'Earnings' }} />
       </Stack>
       </AuthProvider>
     </SafeAreaProvider>

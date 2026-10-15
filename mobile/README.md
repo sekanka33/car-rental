@@ -56,12 +56,43 @@ open. It shows the car on a map with the ETA and "Updated … ago", warns when n
 arrived for a minute, reconnects with backoff (up to 30 s) after a network drop, refreshes the
 session once if the server closes with 4401, and stops when tracking ends.
 
-**Owners** open **Profile → My deliveries** (`src/app/deliveries/`). On a scheduled delivery
-they tap **Set off now**, then **Share my location** (`src/hooks/use-location-sharing.ts`):
-the app asks for foreground location permission and sends a position at most every 10 s while
-the screen is open, and stops by itself when the server says the delivery is no longer on its
-way. Background sharing needs a development build and is not enabled. The other owner screens
-(scheduling, handover, return) arrive in Stage 14; until then owners use the API for those.
+**Owners** open **My cars → Deliveries and returns** (`src/app/deliveries/`). A delivery
+goes: pick a time (the rental start, or 1, 2, 3 or 24 hours before) → **Set off now** →
+**Share my location** (`src/hooks/use-location-sharing.ts`; foreground permission, a position
+at most every 10 s while the screen is open, stops itself when the delivery ends) → **Record
+handover** (odometer, fuel, notes) and photos until the renter confirms → **Record return**
+(the odometer may not go below the handover) and photos within 2 hours. **Report a problem**
+is available while the delivery is active; anything but "running late" stops it for support.
+The renter's phone number has a **Call** button. Background location is not enabled.
+
+## Dashboards
+
+The tabs follow the account's roles: renters get **Bookings**, owners get **My cars**
+(both for an account with both roles).
+
+**Renter (Bookings tab):** "Needs your attention" (pay for a held booking, confirm you have
+the car, verify your identity unless already approved or under review), then Now, Upcoming
+and Past bookings, and **Payment history** (`/payments`: every payment with its refunds).
+**Verify your identity** (`/verification`, also from Profile): date of birth, then the SA ID
+(13 digits) and driving licence (number, expiry, codes), each with a front and optional back
+taken with the camera or chosen as a file. The reviewer's note is shown when a document is
+rejected or needs more information.
+
+**Owner (My cars tab):** money collected this month and this year (gross, before platform
+commission), upcoming bookings, cars on the road, cars listed, and what needs doing
+(deliveries, returns, documents expiring within 30 days, rejected cars, drafts). From there:
+- **My cars** (`/owner/vehicles`): register a car (no price fields; prices are set by
+  CarHire SA), add 3–12 photos and the registration certificate, licence disc and insurance
+  (expiry date required for the last two), submit for review, withdraw, hide or list again,
+  edit (only changed fields are sent, so a colour change never triggers a review), delete a
+  draft, and **blocked dates** (whole days in SA time).
+- **Bookings** (`/owner/bookings`): upcoming, on the road and past, renter's first name only.
+- **Earnings** (`/owner/earnings`): per month (bar chart) and per booking, by year.
+
+Uploads use `expo-image-picker` (camera and photo library) and `expo-document-picker` (PDF),
+sent as multipart forms (`src/lib/upload.ts`). The backend checks every file's real type.
+Private photos (owner car photos, handover photos) are loaded with the access token
+(`src/components/private-image.tsx`).
 
 ## Commands
 
@@ -84,10 +115,13 @@ src/
 ├── app/              # Expo Router routes (every file is a screen)
 │   ├── index.tsx     # Welcome (redirects signed-in users)
 │   ├── (auth)/       # Login, Registration (real backend accounts)
-│   ├── (tabs)/       # Home (marketplace), Bookings, Profile
+│   ├── (tabs)/       # Home (marketplace), Bookings (renter dashboard), My cars (owner dashboard), Profile
 │   ├── vehicles/[id]/  # index (details), book (dates, quote, reserve)
 │   ├── bookings/[id].tsx  # Booking detail, hold countdown, cancel, live tracking
-│   └── deliveries/   # Owner: my deliveries, set off, share location
+│   ├── deliveries/   # Owner: deliveries, schedule, set off, share location, handover, return
+│   ├── owner/        # Owner: vehicles (register, details, edit, blocked dates), bookings, earnings
+│   ├── payments/     # Payment history; checkout return
+│   └── verification.tsx  # Date of birth, ID and licence upload
 ├── context/          # AuthProvider / useAuth
 ├── components/       # Reusable UI (ui/) and domain components
 ├── constants/        # Branding placeholders and colour constants

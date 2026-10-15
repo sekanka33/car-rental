@@ -1,4 +1,4 @@
-import { ApiError, apiGet, buildUrl } from '@/lib/api';
+import { ApiError, apiGet, apiRequest, buildUrl } from '@/lib/api';
 
 const mockFetch = jest.fn();
 globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -59,5 +59,19 @@ describe('apiGet', () => {
     );
 
     await expect(apiGet('/x', undefined, { timeoutMs: 10 })).rejects.toMatchObject({ code: 'timeout' });
+  });
+});
+
+describe('uploads', () => {
+  it('sends a multipart form as-is, without a JSON content type', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(201, { id: 'p1' }));
+    const form = new FormData();
+    form.append('document_type', 'INSURANCE');
+
+    await apiRequest('POST', '/api/v1/upload', { form, body: { ignored: true } });
+
+    const [, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    expect(init.body).toBe(form);
+    expect(init.headers['Content-Type']).toBeUndefined();
   });
 });

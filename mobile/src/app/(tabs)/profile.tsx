@@ -44,10 +44,12 @@ function RenterVerification() {
       <Row label="Driving licence">
         <Badge label={licence.label} tone={licence.tone} />
       </Row>
-      <Text className="mt-3 text-sm text-ink-muted">
-        You need an approved ID and driving licence before you can book. Uploading documents in
-        the app arrives in a later release.
-      </Text>
+      <Button
+        label={id.label === 'Approved' && licence.label === 'Approved' ? 'View my documents' : 'Verify my identity'}
+        variant="secondary"
+        className="mt-4"
+        onPress={() => router.push('/verification')}
+      />
     </>
   );
 }
@@ -96,10 +98,6 @@ export default function ProfileScreen() {
           <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">Verification</Text>
           <RenterVerification />
         </>
-      ) : null}
-
-      {user.roles.includes('OWNER') ? (
-        <Button label="My deliveries" variant="secondary" className="mt-8" onPress={() => router.push('/deliveries')} />
       ) : null}
 
       <Button

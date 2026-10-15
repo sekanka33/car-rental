@@ -32,6 +32,8 @@ type QueryValue = string | number | boolean | null | undefined;
 interface RequestOptions {
   params?: Record<string, QueryValue>;
   body?: unknown;
+  /** Multipart upload (files); sent instead of `body`. The boundary header is set by fetch. */
+  form?: FormData;
   auth?: boolean;
   timeoutMs?: number;
 }
@@ -61,13 +63,13 @@ async function send(method: string, path: string, options: RequestOptions, acces
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (options.body !== undefined && !options.form) headers['Content-Type'] = 'application/json';
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   try {
     return await fetch(buildUrl(path, options.params), {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       signal: controller.signal,
     });
   } catch (error) {

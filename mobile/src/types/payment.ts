@@ -35,3 +35,9 @@ export interface Payment {
   refunds: Refund[];
   booking_status: BookingStatus | null;
 }
+
+/** GET /api/v1/customers/me/payments */
+export interface RenterPayment extends Payment {
+  booking_reference: string;
+  vehicle: string;
+}

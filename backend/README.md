@@ -298,6 +298,23 @@ process** (one uvicorn worker) for now. More instances need a shared channel (Po
 `LISTEN/NOTIFY` or Redis pub/sub) feeding the same `publish`; see
 [docs/architecture.md](../docs/architecture.md).
 
+### Dashboards (Stage 14)
+
+Read-only views behind the mobile dashboards (FR-34).
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET /api/v1/owners/me/dashboard` | `OWNER` | Cars per status; upcoming bookings and rentals under way; deliveries and returns still to do (assigned to you); gross this month and this year; licence discs and insurance of listed cars expiring within 30 days (or expired); the next booking |
+| `GET /api/v1/owners/me/bookings?scope=upcoming\|active\|past\|all` | `OWNER` | Paid-for bookings of your cars (unpaid and expired holds are left out), with the delivery's id and status. The renter's **first name only**; contact details stay on the delivery (BR-7.14) |
+| `GET /api/v1/owners/me/earnings?year=` | `OWNER` | Gross per booking and per month (default: this year) |
+| `GET /api/v1/customers/me/payments` | `RENTER` | Every payment attempt across your bookings, newest first, with refunds, booking reference and car |
+
+**Earnings (OPEN-1 default):** the platform is merchant of record and no commission is agreed,
+so earnings are **gross**: money actually received (`paid_at` set) for bookings of your cars,
+minus refunds that are pending or processed (failed refunds are not deducted). A booking counts
+in the month its rental **starts**, in South African time. The response's `basis` field says
+this in words for the app to show.
+
 ### Payments (Paystack)
 
 | Endpoint | Access | Purpose |
@@ -422,14 +439,14 @@ app/
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), dashboards, admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments, Google Maps)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, dashboards, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

@@ -7,16 +7,9 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/ui/state-view
 import { useAuth } from '@/context/auth';
 import { useAsync } from '@/hooks/use-async';
 import { formatDateTime } from '@/lib/dates';
+import { DELIVERY_STATUS } from '@/lib/labels';
 import { listMyDeliveries } from '@/services/owner-deliveries';
 
-const STATUS: Record<string, string> = {
-  PENDING_SCHEDULE: 'Time not confirmed',
-  SCHEDULED: 'Scheduled',
-  EN_ROUTE: 'On the way',
-  DELIVERED: 'Delivered, awaiting return',
-  FAILED: 'Stopped: support will contact you',
-  CANCELLED: 'Cancelled',
-};
 
 function DeliveryList() {
   const deliveries = useAsync(listMyDeliveries);
@@ -33,7 +26,7 @@ function DeliveryList() {
             <Text className="text-base font-semibold text-ink">
               {delivery.vehicle.make} {delivery.vehicle.model} · {delivery.booking_reference}
             </Text>
-            <Text className="mt-1 text-sm text-ink-muted">{STATUS[delivery.status]}</Text>
+            <Text className="mt-1 text-sm text-ink-muted">{DELIVERY_STATUS[delivery.status]}</Text>
             <Text className="text-sm text-ink-muted">
               {delivery.scheduled_for ? formatDateTime(delivery.scheduled_for) : `Rental starts ${formatDateTime(delivery.rental_start_at)}`}
             </Text>

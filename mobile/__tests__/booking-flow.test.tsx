@@ -48,6 +48,16 @@ jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { replace: jest.fn(), push: jest.fn(), back: jest.fn() },
   useLocalSearchParams: () => ({ id: 'v1' }),
+  useFocusEffect: jest.fn(),
+}));
+jest.mock('@/services/customers', () => ({
+  getCustomerProfile: jest.fn(async () => ({
+    date_of_birth: '1995-06-15',
+    id_verification_status: 'APPROVED',
+    licence_verification_status: 'APPROVED',
+    licence_expiry_date: '2030-01-01',
+    minimum_age: 18,
+  })),
 }));
 const mockRouter = jest.requireMock('expo-router').router as { replace: jest.Mock };
 

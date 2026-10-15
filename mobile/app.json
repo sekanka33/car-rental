@@ -45,6 +45,14 @@
           "locationAlwaysAndWhenInUsePermission": false,
           "isAndroidBackgroundLocationEnabled": false
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "CarHire SA uses your photos so you can upload your ID, driving licence, car photos and handover pictures.",
+          "cameraPermission": "CarHire SA uses the camera to photograph your ID, driving licence, your car and its condition at handover.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

@@ -14,5 +14,6 @@ export const COLORS = {
   inkMuted: '#6B7280',
   inkSubtle: '#9CA3AF',
   danger: '#B91C1C',
+  warning: '#B45309',
   white: '#FFFFFF',
 } as const;
