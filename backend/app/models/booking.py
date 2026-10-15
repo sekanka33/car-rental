@@ -41,7 +41,6 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "status <> 'PENDING_PAYMENT' OR hold_expires_at IS NOT NULL",
             name="pending_payment_has_hold",
         ),
-        # No two reserving bookings for the same vehicle may overlap in time.
         
         ExcludeConstraint(
             ("vehicle_id", "="),
