@@ -42,7 +42,7 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="pending_payment_has_hold",
         ),
         # No two reserving bookings for the same vehicle may overlap in time.
-        # Enforced by PostgreSQL itself, so concurrent requests cannot double-book.
+        # requests cannot double-book.
         ExcludeConstraint(
             ("vehicle_id", "="),
             (
