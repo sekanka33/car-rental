@@ -22,7 +22,7 @@ class AuditLog(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
-    # RESTRICT: users with audit history are deactivated/anonymised, never hard-deleted.
+    # RESTRICT: users with audit history are deactiv never hard-deleted.
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
