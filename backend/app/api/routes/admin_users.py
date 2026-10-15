@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.deps import AdminUser, DbSession
+from app.models.enums import RoleName, UserStatus
 from app.repositories import users as repo
 from app.schemas.auth import AdminUserResponse, SuspendUserRequest, UserListResponse
 from app.services import accounts
@@ -17,8 +18,18 @@ def list_users(
     session: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
+    q: Annotated[str | None, Query(max_length=100, description="Part of an email or name")] = None,
+    role: RoleName | None = None,
+    status: UserStatus | None = None,
 ) -> UserListResponse:
-    users, total = repo.list_users(session, limit=limit, offset=offset)
+    users, total = repo.list_users(
+        session,
+        limit=limit,
+        offset=offset,
+        search=(q or "").strip() or None,
+        role=role,
+        status=status,
+    )
     return UserListResponse(
         items=[AdminUserResponse.from_user(u) for u in users],
         total=total,

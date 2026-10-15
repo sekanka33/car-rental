@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import AdminUser, DbSession, PaymentProviderDep
-from app.models import Payment
-from app.models.enums import PaymentStatus
+from app.models import Payment, Refund
+from app.models.enums import PaymentStatus, RefundStatus
 from app.schemas.payments import PaymentResponse, ReconcileResponse, RefundCreate, RefundResponse
 from app.services import payments
 
@@ -20,6 +20,9 @@ def list_payments(
     session: DbSession,
     status_filter: Annotated[PaymentStatus | None, Query(alias="status")] = None,
     booking_id: uuid.UUID | None = None,
+    refund_status: Annotated[
+        RefundStatus | None, Query(description="Only payments with a refund in this state")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[PaymentResponse]:
@@ -28,6 +31,8 @@ def list_payments(
         query = query.where(Payment.status == status_filter)
     if booking_id is not None:
         query = query.where(Payment.booking_id == booking_id)
+    if refund_status is not None:
+        query = query.where(Payment.refunds.any(Refund.status == refund_status))
     rows = session.scalars(
         query.order_by(Payment.created_at.desc()).limit(limit).offset(offset)
     ).all()

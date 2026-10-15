@@ -4,13 +4,13 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–14 complete. Renters can register and log in in the
+> **Current state:** Stages 01–15 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
 > car and pay for it** (Paystack checkout, verified by the backend), follow its
 > **delivery live on a map with an ETA**, confirm the handover and say when they are ready to return it. Owners
 > register and manage their cars, documents and blocked dates, run the whole delivery and
 > return from the app, and see their bookings and gross earnings; renters verify their
-> identity in the app and see their payment history. Administrators reassign and resolve failed deliveries (web dashboard in Stage 15). Payments run in **test
+> identity in the app and see their payment history. Administrators run everything from the web dashboard: verification, vehicle approval and pricing, bookings, refunds, deliveries, users and the audit log, with live charts. Payments run in **test
 > mode only** until live keys are approved. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
@@ -90,7 +90,7 @@ car-rental/
 ├── docker-compose.yml      # Local PostgreSQL 16 (dev + test databases)
 ├── infra/postgres/init/    # Creates the test database on first start
 ├── .env.example            # Root settings for docker compose (copy to .env)
-└── admin-dashboard/        # React admin — empty placeholder until Stage 15
+└── admin-dashboard/        # React admin dashboard (Stage 15) — see admin-dashboard/README.md
 ```
 
 ## 6. Development Roadmap
@@ -117,7 +117,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 12 | Delivery Management | [x] COMPLETE | backend 533/533; mobile 44/44; 15/17 mutations caught (2 equivalent); live E2E 20/20 |
 | 13 | Google Maps and Live Tracking | [x] COMPLETE | backend 572/572; mobile 54/54; 18/18 mutations caught (3 gaps closed); live E2E 47/47 |
 | 14 | Customer and Owner Dashboards | [x] COMPLETE | backend 583/583; mobile 89/89; 23/24 mutations caught (1 equivalent); API E2E 39/39; browser E2E 25/25 |
-| 15 | Administrator Dashboard | NOT STARTED | Not tested |
+| 15 | Administrator Dashboard | [x] COMPLETE | backend 595/595; admin 32/32; 23/23 mutations caught; browser E2E 27/27 |
 | 16 | Notifications and Communication | NOT STARTED | Not tested |
 | 17 | Security, Testing, and Quality Assurance | NOT STARTED | Not tested |
 | 18 | Deployment and Documentation | NOT STARTED | Not tested |
@@ -1053,6 +1053,56 @@ Outstanding limitations:
 Next stage:
 - Stage 15: Administrator Dashboard.
 
+### Stage 15: Administrator Dashboard
+
+Status: COMPLETE (2026-10-15)
+
+Implemented:
+
+**Admin dashboard** (`admin-dashboard/`, React 19 + TypeScript 6 + Vite 8 + Tailwind CSS 4 + React Router 7 + Recharts 3):
+- **Sign in** for administrators only; other accounts are signed out at once. Access token in memory, refresh token in `sessionStorage` (ends with the tab), one shared refresh on a 401, sign-out revokes the session. Strict Content Security Policy; no cookies.
+- **Overview:** work-queue tiles linked to the matching filtered list (verifications, vehicles awaiting approval, deliveries needing attention, failed refunds), this month's money, counts, and five charts from live data (money per month, confirmed bookings, new accounts, bookings and vehicles by status) plus the same figures as a table. The sidebar shows queue counts that update as work gets done.
+- **Verifications:** queue by status; view the ID or licence file on request (audited); approve, ask for more information or reject (a note is required, the renter sees it); confirm the licence expiry.
+- **Vehicles & pricing:** queue by status; photos and documents; approve (only with complete documents), reject, suspend, reinstate; set the official price (daily rate, delivery fee, deposit, reason, optional future start) with history and a quote preview.
+- **Bookings:** filter, detail with payments, cancel with a reason (paid bookings are refunded in full).
+- **Payments & refunds:** filter by payment or refund state; full or partial refunds limited to what is left; "Check pending with Paystack" (reconciliation).
+- **Deliveries:** needs-attention filter; reschedule (not while on the way, before the rental ends), reassign to an active owner found by search, resolve a delay; handover and return records with photos.
+- **Users:** search, filter by role and status, suspend with a reason or reactivate (never your own account).
+- **Audit log:** filter by record type, id, action prefix and actor; each detail page shows its record's history.
+
+**Backend:**
+- `GET /admin/reports/overview` and `GET /admin/reports/monthly?months=` (`app/services/reports.py`): money on a cash basis (payments by month received, refunds by month processed), months in South African time, zero-filled.
+- `GET /admin/audit-logs` with filters, the acting user and a total.
+- New filters: users `q` (email or name; `%` and `_` literal), `role`, `status`; payments `refund_status`; deliveries `booking_id`. The deliveries "needs attention" filter now means failed or a problem still open, the same set the overview counts.
+
+Files changed:
+- Admin dashboard: new app (`package.json`, `index.html`, `vite.config.ts`, `tsconfig*.json`, `eslint.config.js`, `.env.example`, `README.md`, `src/`); the `.gitkeep` placeholder was removed.
+- Backend:
+  - New: `app/services/reports.py`, `app/api/routes/admin_reports.py`, `tests/admin_reports/`
+  - Modified: `app/api/router.py`, `app/api/routes/{admin_users,admin_payments,admin_deliveries}.py`, `app/repositories/users.py`, `app/services/deliveries.py`
+- Docs: all READMEs, `docs/architecture.md`, `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **595 passed, 0 failed** (12 new): access rules, work-queue counts (failed and open-problem deliveries, but not resolved or cancelled ones), the overview list and tile agreeing, money by SA month (22:30 UTC on the last day counts in the next month, failed and pending refunds excluded, next month excluded), zero-filled monthly series across a year boundary, audit filters (prefix with a literal `%`, actor, system entries, paging), user search (`_` literal), refund-state and booking filters.
+- **Admin dashboard:** `npm test` **32 passed** (API client session handling, money and validation rules, and screens: sign-in refusal, overview, verification decisions and on-demand document viewing, vehicle approval and pricing, refund limits, user suspension and search); `tsc -b` and ESLint clean; production build (charts load only on the Overview); `npm audit` 0 vulnerabilities.
+- **Mutation checks: 23 of 23 caught** (12 backend, 11 admin app). Five backend gaps were found by this check and closed with stronger tests: failed refunds with a processing date, a payment after the month, a literal `%` in the audit search, a `_` in the user search.
+- **Browser end to end, 27/27** (the built dashboard in headless Chromium against the real API with a Paystack stand-in): a renter account is refused; overview queues and five charts; ID document opened from a blob URL, approved, and the view recorded in the history; a vehicle priced and approved; a paid booking cancelled with a full refund; the attention filter, a failed delivery rescheduled, a delay resolved; an over-refund blocked and a partial refund sent; a user suspended; the audit log filtered; every queue empty afterwards; sign out; no page or console errors.
+- **Problems found and fixed during the stage:**
+  - Saving a decision reloaded the page through a loading state, which closed the document the reviewer had open. Reloads now keep the current data on screen until the new data arrives (with a test).
+  - Chart axis ticks rounded 1.5k to "R 2k", which looked uneven; the stacked chart's legend was alphabetical instead of in series order.
+  - The overview's "deliveries needing attention" and the list behind it used slightly different rules; they now share one definition.
+  - Vitest 5, jsdom 30 and React Router 8 need Node 22; the newest versions that run on Node 20 are used instead.
+
+Outstanding limitations:
+- **No dark mode** in the dashboard (light theme only), and it is laid out for desktop and tablet widths.
+- Tokens in `sessionStorage` are readable by script on the page; the CSP keeps third-party scripts out, but an `HttpOnly` cookie session would be stronger. Recommended before production (Stage 17).
+- Lists other than users and the audit log have no total count (paging shows Previous/Next).
+- No CSV export of reports; charts cover the last 12 months.
+- Administrators are still created with the CLI only (by design); there is no in-app admin management.
+
+Next stage:
+- Stage 16: Notifications and Communication.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -1093,9 +1143,12 @@ pip install -r requirements-dev.txt
 cp .env.example .env            # put the same password into DATABASE_URL / TEST_DATABASE_URL
 alembic upgrade head
 python -m app.cli create-admin --email you@example.com --full-name "Your Name"   # first administrator
-```
 
-*Planned:* admin dashboard (`npm install` in `admin-dashboard/`, Stage 15).
+# Admin dashboard
+cd ../admin-dashboard
+npm install
+cp .env.example .env            # VITE_API_URL (default http://localhost:8000)
+```
 
 ## 10. Environment Configuration
 
@@ -1161,7 +1214,14 @@ routes live under `/api/v1`. More detail is in [backend/README.md](backend/READM
 
 ## 14. Running the Admin Dashboard
 
-Not yet implemented (Stage 15).
+```bash
+cd admin-dashboard
+npm run dev        # http://localhost:5173 — start the backend first
+```
+
+Sign in with an administrator account (created with `python -m app.cli create-admin`).
+The backend's `CORS_ORIGINS` must include `http://localhost:5173`. See
+[admin-dashboard/README.md](admin-dashboard/README.md).
 
 ## 15. Running Tests
 
@@ -1187,7 +1247,17 @@ alembic check          # models match migrations
 ```
 
 Database tests use `TEST_DATABASE_URL`. Its schema is **dropped and recreated** on
-every run, so the name must end in `_test`. Dashboard checks are added in Stage 15.
+every run, so the name must end in `_test`.
+
+Admin dashboard:
+
+```bash
+cd admin-dashboard
+npm test            # Vitest + Testing Library
+npm run typecheck   # tsc -b
+npm run lint        # ESLint
+npm run build       # production build
+```
 
 ## 16. API Documentation
 
@@ -1214,9 +1284,11 @@ list, detail, schedule, start, handover, return, exceptions, photos; `/bookings/
 `…/delivery/acknowledge`, `…/return-request`; `/admin/deliveries`: list, detail, assign,
 reschedule, resolve exception, photos); **live tracking** (`POST /owners/me/deliveries/{id}/location`,
 `WS /deliveries/{id}/live`); renter profile, date of birth, document upload and
-list, own-file download, and eligibility (`/customers/me/...`); admin users
-(list, suspend, reactivate) and verifications (queue, detail, audited file view,
-decision). The full tables with access rules are in
+list, own-file download, and eligibility (`/customers/me/...`); dashboards
+(`/owners/me/dashboard`, `/owners/me/bookings`, `/owners/me/earnings`, `/customers/me/payments`); admin users
+(list with search and filters, suspend, reactivate), verifications (queue, detail, audited file view,
+decision), and admin reports (`/admin/reports/overview`, `/admin/reports/monthly`) and the audit log
+(`/admin/audit-logs`). The full tables with access rules are in
 [backend/README.md](backend/README.md#authentication-and-authorisation). Every
 error uses the envelope `{"error": {"code", "message", "details"?}}`.
 
@@ -1232,6 +1304,7 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - Deliveries can be acted on only by the assigned delivery person; renters see only their own. Handover and return photos are private, and photos are only accepted shortly after the record (no late "evidence"). The renter sees the delivery person's first name only.
 - Location is accepted only from the assigned delivery person while the car is on its way, and visible only to the booking's renter, the assignee and administrators. The WebSocket token is sent in the first message, never in the URL. Location history is deleted after 90 days (`purge-locations`).
 - Secrets live only in environment variables. HTTPS is required in production.
+- The admin dashboard only works for administrator accounts (the backend checks every request). It keeps the access token in memory and the refresh token in `sessionStorage`, runs under a strict Content Security Policy, and opens private files only on request (document views are audited).
 - No real financial transactions or production deployments happen without explicit owner approval.
 
 - Full SA ID and licence numbers are never stored, only a keyed HMAC and the last 3 digits. Document files live in private storage with server-generated names, are type-checked by content, can be viewed only by their owner and administrators, and **every administrator view is audited**.
@@ -1242,7 +1315,6 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 ## 18. Known Issues
 
 - Open business decisions (commission and payouts, cancellation policy, delivery model, insurance age rules, VAT, payment provider) are listed in [docs/requirements.md §5](docs/requirements.md#5-open-business-decisions). They do not block Stages 02–05.
-- `admin-dashboard/` contains only a `.gitkeep` placeholder.
 - Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
 - **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
@@ -1257,11 +1329,11 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 
 ## 19. Current Development Status
 
-Stages 01–14 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings, Paystack payments, deliveries, live tracking and the dashboard views (owner bookings, earnings and summary; renter payment history), with 583 passing tests. The mobile app covers the renter journey (marketplace, booking, payment, identity verification, live delivery, dashboard and payment history) and the owner journey (dashboard, car registration with photos and documents, blocked dates, deliveries and returns, bookings, earnings), with 89 passing tests.
+Stages 01–15 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings, Paystack payments, deliveries, live tracking, dashboard views and administrator reports and audit log, with 595 passing tests. The mobile app covers the renter and owner journeys (89 tests). The admin dashboard covers every administrator workflow with live charts (32 tests).
 
 ## 20. Next Stage
 
-**Stage 15: Administrator Dashboard.** A React + TypeScript + Tailwind web app in
-`admin-dashboard/` covering the admin workflows (verification review, vehicle approval and
-pricing, bookings, payments and refunds, deliveries and exceptions, users, audit log), with
-charts drawn from real aggregates. Waiting for owner approval to begin.
+**Stage 16: Notifications and Communication.** Email and Expo push notifications for booking,
+payment, verification, delivery, cancellation and return events, with failure handling and
+user preferences. Needs from you: a real email (SMTP) provider account for staging, and an
+Expo account for push notifications. Waiting for owner approval to begin.

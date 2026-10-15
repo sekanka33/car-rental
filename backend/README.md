@@ -109,7 +109,7 @@ marks expired holds as `EXPIRED` before it checks availability.
 | `POST /api/v1/auth/password-reset/confirm` | public (email token) | Set a new password; signs out everywhere |
 | `GET /api/v1/users/me` | authenticated | Current user, roles, verification state |
 | `GET /api/v1/owners/me/profile` | `OWNER` | Owner profile (vehicle endpoints come in Stage 07) |
-| `GET /api/v1/admin/users` | `ADMIN` | List users |
+| `GET /api/v1/admin/users[?q=&role=&status=]` | `ADMIN` | List users, newest first, with `total`; `q` matches part of the email or name (`%` and `_` are literal) |
 | `POST /api/v1/admin/users/{id}/suspend` | `ADMIN` | Suspend (audited; revokes all sessions) |
 | `POST /api/v1/admin/users/{id}/reactivate` | `ADMIN` | Reactivate (audited) |
 
@@ -251,7 +251,7 @@ when payment confirms the booking. Rules: BR-7 in
 | `POST /api/v1/bookings/{id}/delivery/acknowledge` | `RENTER` | Confirm receipt, optional `notes`. Booking → `ACTIVE_RENTAL` |
 | `POST /api/v1/bookings/{id}/return-request` | `RENTER` | Ready to return. Booking → `RETURN_PENDING` |
 | `GET /api/v1/bookings/{id}/delivery/photos/{photo_id}` | `RENTER` | Private photo |
-| `GET /api/v1/admin/deliveries[?status=&open_exceptions=true]` | `ADMIN` | All deliveries |
+| `GET /api/v1/admin/deliveries[?status=&open_exceptions=true&booking_id=]` | `ADMIN` | All deliveries; `open_exceptions=true` = needs attention: failed, or a reported problem still open (the same set the admin overview counts) |
 | `GET /api/v1/admin/deliveries/{id}` | `ADMIN` | Detail with exception resolutions |
 | `POST /api/v1/admin/deliveries/{id}/assign` | `ADMIN` | `user_id` of an active owner account |
 | `POST /api/v1/admin/deliveries/{id}/reschedule` | `ADMIN` | `scheduled_for` (future, before the rental ends) and `note`; resolves open exceptions; re-attempts a failed delivery |
@@ -315,6 +315,21 @@ minus refunds that are pending or processed (failed refunds are not deducted). A
 in the month its rental **starts**, in South African time. The response's `basis` field says
 this in words for the app to show.
 
+### Administrator reports and audit log (Stage 15)
+
+Read-only endpoints behind the admin dashboard (`admin-dashboard/`).
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET /api/v1/admin/reports/overview` | `ADMIN` | Work queues (pending verifications, vehicles awaiting approval, deliveries needing attention, refunds pending and failed), upcoming and under-way bookings, users per role and suspended, vehicles and bookings per status, money received and refunded this month |
+| `GET /api/v1/admin/reports/monthly?months=1..24` | `ADMIN` | The last N months (default 12), oldest first and zero-filled: confirmed bookings, money received, refunds processed, net, new renter and owner accounts |
+| `GET /api/v1/admin/audit-logs[?entity_type=&entity_id=&actor_user_id=&action=]` | `ADMIN` | Audit entries, newest first, with the acting user (null for system actions) and `total`; `action` is a prefix such as `vehicle.` |
+
+**Money in reports is on a cash basis:** a payment counts in the month it was received
+(`paid_at`), a refund in the month Paystack processed it; pending and failed refunds are not
+subtracted. Months are calendar months in South African time. (Owner earnings in Stage 14 count
+by rental start instead; the two answer different questions.)
+
 ### Payments (Paystack)
 
 | Endpoint | Access | Purpose |
@@ -323,7 +338,7 @@ this in words for the app to show.
 | `GET /api/v1/bookings/{id}/payments` | `RENTER` (own booking) | Payments and their refunds |
 | `POST /api/v1/payments/{id}/refresh` | `RENTER` (own payment) | Verify with Paystack now (after returning from checkout) |
 | `POST /api/v1/payments/webhooks/paystack` | Public, **HMAC-SHA512 signature** | Paystack notifications; stored once, then verified through the API (401 `invalid_signature`) |
-| `GET /api/v1/admin/payments[?status=&booking_id=]` | `ADMIN` | All payments with refunds and booking status |
+| `GET /api/v1/admin/payments[?status=&booking_id=&refund_status=]` | `ADMIN` | All payments with refunds and booking status; `refund_status` finds payments with a refund in that state (e.g. `FAILED`) |
 | `POST /api/v1/admin/payments/{id}/refunds` | `ADMIN` | Full (omit `amount`) or partial refund with a `reason`; audited |
 | `POST /api/v1/admin/payments/reconcile` | `ADMIN` | Re-check pending payments and refunds now |
 
@@ -439,14 +454,14 @@ app/
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), dashboards, admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), dashboards, admin_* (incl. admin_reports), health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
 ├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments, Google Maps)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, dashboards, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, dashboards, reports, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

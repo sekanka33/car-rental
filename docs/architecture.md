@@ -58,6 +58,7 @@ Layering (each layer may only call the one beneath it):
 React, TypeScript, Vite, Tailwind CSS, and Recharts for charts.
 - Administrator-only. Every action calls protected backend endpoints. Hiding UI elements is not treated as security.
 - All metrics come from backend aggregate endpoints over real data.
+- **Stage 15 decisions:** React Router 7, Vitest 4 and jsdom 29 (the newest versions that run on Node 20). Session: access token in memory, refresh token in `sessionStorage` (survives a reload, ends with the tab), no cookies; a strict Content Security Policy limits scripts to the app and API calls to the configured backend. Private files are fetched only on request and shown from `blob:` URLs. Aggregates come from `GET /admin/reports/overview` and `/admin/reports/monthly` (cash basis, SA months).
 
 ### Database (PostgreSQL 16)
 Planned core tables for Stage 04 (more added as features need them):

@@ -17,7 +17,7 @@ return recorded                   ACTIVE_RENTAL ─► RETURN_PENDING ─► COM
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import AppError, NotFoundError
@@ -174,16 +174,25 @@ def list_deliveries(
     open_exceptions: bool,
     limit: int,
     offset: int,
+    booking_id: uuid.UUID | None = None,
 ) -> list[Delivery]:
     query = _delivery_query()
+    if booking_id is not None:
+        query = query.where(Delivery.booking_id == booking_id)
     if status is not None:
         query = query.where(Delivery.status == status)
     if open_exceptions:
+        # Needs an administrator: stopped (FAILED), or a reported problem is still open. The
+        # admin overview counts the same set (app/services/reports.py).
         query = query.where(
-            exists().where(
-                DeliveryException.delivery_id == Delivery.id,
-                DeliveryException.resolved_at.is_(None),
-            )
+            Delivery.status != DeliveryStatus.CANCELLED,
+            or_(
+                Delivery.status == DeliveryStatus.FAILED,
+                exists().where(
+                    DeliveryException.delivery_id == Delivery.id,
+                    DeliveryException.resolved_at.is_(None),
+                ),
+            ),
         )
     return list(
         session.scalars(query.order_by(Delivery.created_at.desc()).limit(limit).offset(offset))

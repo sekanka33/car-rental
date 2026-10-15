@@ -3,11 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import RefreshToken, Role, User, UserActionToken, UserRole
-from app.models.enums import RoleName, UserActionTokenPurpose
+from app.models.enums import RoleName, UserActionTokenPurpose, UserStatus
 
 
 def get_user(session: Session, user_id: uuid.UUID) -> User | None:
@@ -43,10 +43,28 @@ def assign_role(
     )
 
 
-def list_users(session: Session, *, limit: int, offset: int) -> tuple[list[User], int]:
-    total = session.scalar(select(func.count()).select_from(User)) or 0
+def list_users(
+    session: Session,
+    *,
+    limit: int,
+    offset: int,
+    search: str | None = None,
+    role: RoleName | None = None,
+    status: UserStatus | None = None,
+) -> tuple[list[User], int]:
+    """Newest first. `search` matches part of the email or name (case-insensitive)."""
+    conditions = []
+    if search:
+        pattern = "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        conditions.append(or_(User.email.ilike(pattern), User.full_name.ilike(pattern)))
+    if role is not None:
+        conditions.append(User.roles.any(Role.name == role))
+    if status is not None:
+        conditions.append(User.status == status)
+    total = session.scalar(select(func.count()).select_from(User).where(*conditions)) or 0
     users = session.scalars(
         select(User)
+        .where(*conditions)
         .options(selectinload(User.roles))
         .order_by(User.created_at.desc(), User.id)
         .limit(limit)

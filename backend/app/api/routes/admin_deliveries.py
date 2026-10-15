@@ -23,6 +23,7 @@ def list_deliveries(
     session: DbSession,
     status_filter: Annotated[DeliveryStatus | None, Query(alias="status")] = None,
     open_exceptions: Annotated[bool, Query(description="Only those needing attention")] = False,
+    booking_id: uuid.UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AdminDeliveryResponse]:
@@ -32,6 +33,7 @@ def list_deliveries(
             session,
             status=status_filter,
             open_exceptions=open_exceptions,
+            booking_id=booking_id,
             limit=limit,
             offset=offset,
         )
