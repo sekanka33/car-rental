@@ -29,6 +29,7 @@ from app.integrations.payments import PaymentProvider, PaymentProviderError
 from app.models import Booking, Payment, PaymentEvent, Refund, User
 from app.models.enums import BookingStatus, PaymentStatus, RefundStatus
 from app.services import bookings as booking_service
+from app.services import notify_events
 from app.services.audit import record_audit
 
 logger = logging.getLogger(__name__)
@@ -355,7 +356,7 @@ def _issue_refund(
             reference=payment.provider_reference, amount_cents=to_cents(amount), note=reason
         )
         refund.provider_refund_id = result.refund_id
-        _apply_refund_state(payment, refund, result.status)
+        _apply_refund_state(session, payment, refund, result.status)
     except PaymentProviderError as exc:
         refund.status = RefundStatus.FAILED
         refund.failure_reason = str(exc)[:500]
@@ -377,10 +378,11 @@ def _issue_refund(
     return refund
 
 
-def _apply_refund_state(payment: Payment, refund: Refund, state: str) -> None:
+def _apply_refund_state(session: Session, payment: Payment, refund: Refund, state: str) -> None:
     if state == "processed":
         refund.status = RefundStatus.PROCESSED
         refund.processed_at = refund.processed_at or _now()
+        notify_events.refund_processed(session, refund, payment.booking)  # once per refund
     elif state == "failed":
         refund.status = RefundStatus.FAILED
     session_total = sum(
@@ -470,7 +472,7 @@ def refresh_refund(session: Session, provider: PaymentProvider, refund_id: uuid.
     except PaymentProviderError as exc:
         logger.warning("Could not fetch refund %s: %s", refund.id, exc)
         return refund
-    _apply_refund_state(refund.payment, refund, result.status)
+    _apply_refund_state(session, refund.payment, refund, result.status)
     if refund.status != RefundStatus.PENDING:
         record_audit(
             session,

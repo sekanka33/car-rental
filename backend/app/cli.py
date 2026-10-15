@@ -111,6 +111,44 @@ def purge_locations_command(session: Session, settings) -> int:
     return 0
 
 
+def send_notifications_command(session: Session, settings) -> int:
+    from app.integrations.email import build_email_sender
+    from app.integrations.push import build_push_provider
+    from app.services.notifications import dispatch_all
+
+    result = dispatch_all(
+        session, settings, build_email_sender(settings), build_push_provider(settings)
+    )
+    print(
+        f"Sent {result.sent}, skipped {result.skipped}, retrying later {result.retrying}, "
+        f"failed {result.failed}."
+    )
+    return 0
+
+
+def send_reminders_command(session: Session) -> int:
+    from datetime import UTC, datetime
+
+    from app.services.notify_events import queue_reminders
+
+    counts = queue_reminders(session, now=datetime.now(UTC))
+    print(
+        f"Queued {counts['return_reminders']} return reminder(s) and "
+        f"{counts['schedule_reminders']} delivery-time reminder(s)."
+    )
+    return 0
+
+
+def purge_notifications_command(session: Session, settings) -> int:
+    from app.services.notifications import purge_old
+
+    removed = purge_old(session, settings)
+    print(
+        f"Deleted {removed} notification(s) older than {settings.notification_retention_days} days."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -133,6 +171,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Delete delivery location history older than LOCATION_RETENTION_DAYS (run daily)",
     )
     commands.add_parser(
+        "send-notifications",
+        help="Send due notifications (email and push) now; not needed if the API worker runs",
+    )
+    commands.add_parser(
+        "send-reminders",
+        help="Queue return and delivery-time reminders (run hourly from cron)",
+    )
+    commands.add_parser(
+        "purge-notifications",
+        help="Delete notifications older than NOTIFICATION_RETENTION_DAYS (run daily)",
+    )
+    commands.add_parser(
         "seed-demo-data",
         help="DEVELOPMENT ONLY: create demo owners, approved vehicles, photos and prices",
     )
@@ -153,6 +203,12 @@ def main(argv: list[str] | None = None) -> int:
                 return reconcile_payments_command(session, settings)
             if args.command == "purge-locations":
                 return purge_locations_command(session, settings)
+            if args.command == "send-notifications":
+                return send_notifications_command(session, settings)
+            if args.command == "send-reminders":
+                return send_reminders_command(session)
+            if args.command == "purge-notifications":
+                return purge_notifications_command(session, settings)
             return create_admin_command(
                 session,
                 email=args.email,

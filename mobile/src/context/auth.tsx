@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { onSessionExpired } from '@/lib/api';
+import { forgetPushToken, setUpPush } from '@/lib/push';
 import * as authService from '@/services/auth';
 import type { CurrentUser, RegisterInput } from '@/types/auth';
 
@@ -44,6 +45,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Keep this phone's push token current for whoever is signed in (only if push is already
+  // allowed; the permission prompt is shown from the Notifications screen, not at sign-in).
+  const signedInId = state.status === 'signedIn' ? state.user.id : null;
+  useEffect(() => {
+    if (signedInId) void setUpPush({ ask: false });
+  }, [signedInId]);
+
   const refreshUser = useCallback(async () => {
     const user = await loadSessionUser();
     setState(user ? { status: 'signedIn', user } : { status: 'signedOut', user: null });
@@ -59,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState({ status: 'signedIn', user: await authService.register(input) });
       },
       logout: async () => {
+        await forgetPushToken(); // while still signed in, so the server knows whose token it is
         await authService.logout();
         setState({ status: 'signedOut', user: null });
       },

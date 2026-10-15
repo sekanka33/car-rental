@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 
 import { COLORS } from '@/constants/brand';
 import { useAuth } from '@/context/auth';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 
 export default function TabsLayout() {
   const { state } = useAuth();
@@ -10,6 +11,7 @@ export default function TabsLayout() {
   // Signed-out visitors see Bookings (it asks them to log in); owner-only accounts do not.
   const showBookings = roles.length === 0 || roles.includes('RENTER');
   const showOwner = roles.includes('OWNER');
+  const unread = useUnreadCount(state.status === 'signedIn');
   return (
     <Tabs
       screenOptions={{
@@ -48,6 +50,7 @@ export default function TabsLayout() {
         options={{
           title: 'My profile',
           tabBarLabel: 'Profile',
+          tabBarBadge: unread > 0 ? (unread > 9 ? '9+' : unread) : undefined,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-circle-outline" size={size} color={color} />
           ),

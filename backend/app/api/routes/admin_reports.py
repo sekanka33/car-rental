@@ -21,6 +21,7 @@ class OverviewResponse(BaseModel):
     deliveries_needing_attention: int = Field(description="Failed, or with an open exception")
     refunds_pending: int
     refunds_failed: int
+    notifications_failed: int = Field(description="Emails or pushes that could not be sent")
     bookings_upcoming: int
     bookings_under_way: int
     users_by_role: dict[RoleName, int]

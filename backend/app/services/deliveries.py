@@ -41,6 +41,7 @@ from app.models.enums import (
     RoleName,
     UserStatus,
 )
+from app.services import notify_events
 from app.services.audit import record_audit
 from app.services.bookings import transition as booking_transition
 from app.services.uploads import PHOTO_TYPES, check_upload
@@ -254,6 +255,7 @@ def schedule(
         scheduled_for=when.isoformat(),
         previous=previous.isoformat() if previous else None,
     )
+    notify_events.delivery_scheduled(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -266,6 +268,7 @@ def start(session: Session, user: User, delivery_id: uuid.UUID) -> Delivery:
     booking_transition(booking, B.IN_TRANSIT)
     delivery.started_at = _now()
     _audit(session, user, "started", delivery)
+    notify_events.delivery_started(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -319,6 +322,7 @@ def complete_handover(
         condition_notes=condition_notes,
     )
     _audit(session, user, "delivered", delivery, odometer_km=odometer_km, fuel=fuel_level.value)
+    notify_events.delivery_handed_over(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -373,6 +377,7 @@ def record_return(
         fuel=fuel_level.value,
         renter_acknowledged_handover=acknowledged,
     )
+    notify_events.return_recorded(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -393,10 +398,13 @@ def report_exception(
         )
     if kind != DeliveryExceptionKind.DELAY:
         transition(delivery, D.FAILED)
-    session.add(
-        DeliveryException(delivery_id=delivery.id, kind=kind, notes=notes, reported_by_id=user.id)
+    issue = DeliveryException(
+        delivery_id=delivery.id, kind=kind, notes=notes, reported_by_id=user.id
     )
+    session.add(issue)
+    session.flush()
     _audit(session, user, "exception_reported", delivery, kind=kind.value, notes=notes)
+    notify_events.delivery_problem(session, delivery, issue)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -494,6 +502,7 @@ def request_return(session: Session, renter: User, booking_id: uuid.UUID) -> Del
         raise InvalidDeliveryTransitionError(f"A {booking.status} booking cannot be returned.")
     booking_transition(booking, B.RETURN_PENDING)
     _audit(session, renter, "return_requested", delivery)
+    notify_events.return_requested(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -524,6 +533,7 @@ def reassign(session: Session, admin: User, delivery_id: uuid.UUID, user_id: uui
         delivery,
         assigned_to={"from": str(previous) if previous else None, "to": str(assignee.id)},
     )
+    notify_events.delivery_reassigned(session, delivery)
     session.commit()
     return get_delivery(session, delivery.id)
 
@@ -555,6 +565,7 @@ def admin_reschedule(
         note=note,
         resolved_exceptions=resolved,
     )
+    notify_events.delivery_scheduled(session, delivery, by_admin=True)
     session.commit()
     return get_delivery(session, delivery.id)
 

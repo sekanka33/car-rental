@@ -10,6 +10,12 @@ from app.models.delivery import (
     HandoverPhoto,
     HandoverRecord,
 )
+from app.models.notification import (
+    Notification,
+    NotificationDelivery,
+    NotificationPreference,
+    PushToken,
+)
 from app.models.payment import Payment, PaymentEvent, Refund
 from app.models.user import CustomerProfile, OwnerProfile, Role, User, UserRole
 from app.models.vehicle import (
@@ -30,9 +36,13 @@ __all__ = [
     "DeliveryLocationUpdate",
     "HandoverPhoto",
     "HandoverRecord",
+    "Notification",
+    "NotificationDelivery",
+    "NotificationPreference",
     "OwnerProfile",
     "Payment",
     "PaymentEvent",
+    "PushToken",
     "RefreshToken",
     "Refund",
     "Role",

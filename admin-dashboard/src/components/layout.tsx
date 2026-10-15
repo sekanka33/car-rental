@@ -13,6 +13,7 @@ const NAV: { to: string; label: string; count?: (o: Overview) => number }[] = [
   { to: '/payments', label: 'Payments & refunds', count: (o) => o.refunds_failed },
   { to: '/deliveries', label: 'Deliveries', count: (o) => o.deliveries_needing_attention },
   { to: '/users', label: 'Users' },
+  { to: '/notifications', label: 'Notifications', count: (o) => o.notifications_failed },
   { to: '/audit', label: 'Audit log' },
 ];
 

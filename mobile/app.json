@@ -53,6 +53,12 @@
           "cameraPermission": "CarHire SA uses the camera to photograph your ID, driving licence, your car and its condition at handover.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default"
+        }
       ]
     ],
     "experiments": {

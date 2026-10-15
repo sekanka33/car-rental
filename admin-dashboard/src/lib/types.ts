@@ -225,6 +225,7 @@ export interface Overview {
   deliveries_needing_attention: number;
   refunds_pending: number;
   refunds_failed: number;
+  notifications_failed: number;
   bookings_upcoming: number;
   bookings_under_way: number;
   users_by_role: Record<Role, number>;
@@ -255,4 +256,20 @@ export interface AuditEntry {
   entity_id: string;
   actor: { id: string; full_name: string; email: string } | null;
   changes: Record<string, unknown> | null;
+}
+
+export interface NotificationDelivery {
+  id: string;
+  channel: 'EMAIL' | 'PUSH';
+  status: 'PENDING' | 'SENT' | 'FAILED' | 'SKIPPED';
+  attempts: number;
+  last_error: string | null;
+  next_attempt_at: string;
+  sent_at: string | null;
+  updated_at: string;
+  event: string;
+  title: string;
+  user_id: string;
+  user_email: string;
+  created_at: string;
 }

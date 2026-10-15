@@ -6,8 +6,13 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { COLORS } from '@/constants/brand';
 import { AuthProvider } from '@/context/auth';
+import { useNotificationLinks } from '@/hooks/use-notification-links';
+import { configureForegroundNotifications } from '@/lib/push';
+
+configureForegroundNotifications();
 
 export default function RootLayout() {
+  useNotificationLinks();
   return (
     <SafeAreaProvider>
       <AuthProvider>
@@ -37,6 +42,7 @@ export default function RootLayout() {
         <Stack.Screen name="owner/vehicles/[id]/availability" options={{ title: 'Blocked dates' }} />
         <Stack.Screen name="owner/bookings" options={{ title: 'Bookings of my cars' }} />
         <Stack.Screen name="owner/earnings" options={{ title: 'Earnings' }} />
+        <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
       </Stack>
       </AuthProvider>
     </SafeAreaProvider>

@@ -23,6 +23,7 @@ from app.core.identity import (
 from app.integrations.storage import DocumentStorage
 from app.models import CustomerProfile, User, VerificationFile, VerificationSubmission
 from app.models.enums import DocumentSide, DocumentType, SubmissionStatus, VerificationStatus
+from app.services import notify_events
 from app.services.audit import record_audit
 from app.services.uploads import DOCUMENT_TYPES, InvalidUploadError, check_upload
 
@@ -370,6 +371,14 @@ def review_submission(
             "decision": decision.value,
             "note": note,
         },
+    )
+    notify_events.verification_decided(
+        session,
+        submission.user_id,
+        submission.id,
+        submission.document_type.value,
+        decision.value,
+        note,
     )
     session.commit()
     return submission

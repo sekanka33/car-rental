@@ -19,3 +19,4 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]  # pytest asserts; fake credentials in test data
 "migrations/versions/**" = ["E501"]  # generated DDL with long literal lines
+"app/services/notify_events.py" = ["E501"]  # user-facing message texts, kept on one line

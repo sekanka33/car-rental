@@ -51,6 +51,7 @@ npm run preview     # serve dist/ locally
 | Payments & refunds | Filter by payment or refund state; full or partial refunds (limited to what is left); "Check pending with Paystack" runs reconciliation |
 | Deliveries | "Needs attention" filter (failed, or a problem still open); reschedule, reassign to another active owner, resolve a delay; handover and return records with photos |
 | Users | Search by name or email, filter by role and status; suspend with a reason (signs the user out everywhere) or reactivate; your own account cannot be suspended here |
+| Notifications | Emails and pushes by status (default: failed after all retries), with the user, message and last error; retry a failed one |
 | Audit log | Every audited action, filterable by record type, record id, action prefix and actor |
 
 Every detail page shows that record's history from the audit log. Filters and the page live in

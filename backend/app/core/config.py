@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     eta_refresh_seconds: int = Field(default=60, ge=15, le=600)  # Routes API calls per delivery
     location_retention_days: int = Field(default=90, ge=1, le=3650)
 
+    # Notifications (Stage 16). Email uses EMAIL_BACKEND above; push uses the Expo Push Service.
+    push_enabled: bool = True
+    expo_access_token: SecretStr | None = None  # only if "enhanced push security" is on in EAS
+    # The API process sends due notifications every N seconds; 0 turns the built-in worker off
+    # (then run `python -m app.cli send-notifications` from cron or a separate process).
+    notification_worker_seconds: int = Field(default=15, ge=0, le=3600)
+    notification_max_attempts: int = Field(default=5, ge=1, le=10)
+    notification_retention_days: int = Field(default=180, ge=7, le=3650)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_cors_origins(cls, value: object) -> object:
@@ -93,7 +102,9 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("paystack_secret_key", "google_maps_api_key", mode="before")
+    @field_validator(
+        "paystack_secret_key", "google_maps_api_key", "expo_access_token", mode="before"
+    )
     @classmethod
     def empty_key_means_disabled(cls, value: object) -> object:
         return None if value in ("", None) else value

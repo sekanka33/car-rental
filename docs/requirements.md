@@ -73,7 +73,7 @@ deliveries. All amounts are in South African rand (ZAR).
 ### 3.8 Dashboards and notifications
 - FR-34 Renters and owners each have a mobile dashboard for their own data.
 - FR-35 Administrators use a separate web dashboard covering users, owners, vehicles, pricing, bookings, payments, refunds, deliveries, verification, reports, and audit logs.
-- FR-36 Users receive email and push notifications for booking, payment, verification, delivery, cancellation, and return-reminder events.
+- FR-36 Users receive email and push notifications for booking, payment, verification, delivery, cancellation, and return-reminder events. *Stage 16: implemented with an in-app inbox; users can turn email and push off, except payment receipts, refunds and cancellations, which are always emailed.*
 
 ## 4. Non-functional requirements
 

@@ -169,3 +169,17 @@ class Province(StrEnum):
     NORTH_WEST = "North West"
     NORTHERN_CAPE = "Northern Cape"
     WESTERN_CAPE = "Western Cape"
+
+
+class NotificationChannel(StrEnum):
+    EMAIL = "EMAIL"
+    PUSH = "PUSH"
+
+
+class DeliveryAttemptStatus(StrEnum):
+    """State of sending one notification over one channel."""
+
+    PENDING = "PENDING"  # waiting to be sent (or to be retried)
+    SENT = "SENT"
+    FAILED = "FAILED"  # gave up after the last retry (an administrator can retry it)
+    SKIPPED = "SKIPPED"  # nothing to send to: channel turned off, no device, account inactive

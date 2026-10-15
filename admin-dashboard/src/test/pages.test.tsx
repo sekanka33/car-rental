@@ -14,6 +14,7 @@ const OVERVIEW: Overview = {
   deliveries_needing_attention: 0,
   refunds_pending: 0,
   refunds_failed: 1,
+  notifications_failed: 0,
   bookings_upcoming: 3,
   bookings_under_way: 1,
   users_by_role: { ADMIN: 1, OWNER: 4, RENTER: 9 },
@@ -233,5 +234,24 @@ describe('users', () => {
     await ue.type(await screen.findByLabelText('Search'), 'sipho');
     await ue.click(screen.getByRole('button', { name: 'Search' }));
     await waitFor(() => expect(calls.filter((c) => c.path === '/admin/users').at(-1)?.query.get('q')).toBe('sipho'));
+  });
+});
+
+describe('notifications', () => {
+  it('lists failed deliveries and retries one', async () => {
+    const ue = userEvent.setup();
+    const failed = {
+      id: 'n1', channel: 'EMAIL', status: 'FAILED', attempts: 5, last_error: 'SMTP delivery failed: timeout',
+      next_attempt_at: '', sent_at: null, updated_at: '', event: 'booking.confirmed', title: 'Booking confirmed: BK1',
+      user_id: 'u1', user_email: 'naledi@example.com', created_at: '2026-10-15T08:00:00Z',
+    };
+    const calls = renderAt('/notifications', {
+      'GET /admin/notifications': { items: [failed], total: 1 },
+      'POST /admin/notifications/n1/retry': reply(204),
+    });
+    expect(await screen.findByText('SMTP delivery failed: timeout')).toBeInTheDocument();
+    expect(calls.find((c) => c.path === '/admin/notifications')?.query.get('status')).toBe('FAILED');
+    await ue.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/admin/notifications/n1/retry')).toBe(true));
   });
 });

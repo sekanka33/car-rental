@@ -22,12 +22,13 @@ from app.models import (
     Delivery,
     DeliveryException,
     OwnerProfile,
+    Payment,
     User,
     Vehicle,
     VehicleAvailabilityBlock,
 )
 from app.models.enums import BookingStatus, DeliveryStatus
-from app.services import marketplace
+from app.services import marketplace, notify_events
 from app.services.audit import record_audit
 from app.services.eligibility import evaluate_renter_eligibility
 from app.services.pricing import calculate_quote
@@ -117,7 +118,10 @@ def expire_stale_holds(
     )
     if vehicle_id is not None:
         statement = statement.where(Booking.vehicle_id == vehicle_id)
-    return session.execute(statement).rowcount
+    expired = session.scalars(statement.returning(Booking.id)).all()
+    for booking_id in expired:
+        notify_events.booking_expired(session, booking_id)
+    return len(expired)
 
 
 # --- creation ----------------------------------------------------------------------------------
@@ -348,6 +352,14 @@ def _cancel(session: Session, booking: Booking, *, actor: User, reason: str) -> 
         entity_id=booking.id,
         changes={"status": {"from": previous, "to": "CANCELLED"}, "reason": reason},
     )
+    paid = session.scalar(
+        select(Payment.id)
+        .where(Payment.booking_id == booking.id, Payment.paid_at.is_not(None))
+        .limit(1)
+    )
+    notify_events.booking_cancelled(
+        session, booking, by_admin=actor.id != booking.renter_id, refunded=paid is not None
+    )
     session.commit()
     return get_booking(session, booking.id)
 
@@ -403,5 +415,6 @@ def confirm_booking(
         entity_id=booking.id,
         changes={"status": {"from": "PENDING_PAYMENT", "to": "CONFIRMED"}},
     )
+    notify_events.booking_confirmed(session, booking)
     session.commit()
     return get_booking(session, booking.id)

@@ -65,6 +65,22 @@ handover** (odometer, fuel, notes) and photos until the renter confirms → **Re
 is available while the delivery is active; anything but "running late" stops it for support.
 The renter's phone number has a **Call** button. Background location is not enabled.
 
+## Notifications
+
+**Profile → Notifications** (`src/app/notifications.tsx`) is the inbox: unread items are
+highlighted, tapping one marks it read and opens the booking, delivery or car it is about. The
+Profile tab shows an unread badge, refreshed every minute and when the app returns to the
+foreground. At the bottom, the user turns **email** and **push** on or off (payment receipts,
+refunds and cancellations are always emailed).
+
+**Push** (`src/lib/push.ts`, `expo-notifications`): the permission prompt appears only when the
+user turns push on there; after each sign-in an already-granted token is registered silently,
+and it is removed before signing out. Tapping a push opens its screen (also when it started the
+app); only paths inside the app are followed. Push needs a development or store build linked to
+an EAS project (`extra.eas.projectId`): **Expo Go on Android cannot receive remote pushes**
+(since SDK 53), simulators and the web have none. Without push the inbox and email still work,
+and the app says why push is unavailable.
+
 ## Dashboards
 
 The tabs follow the account's roles: renters get **Bookings**, owners get **My cars**
@@ -121,6 +137,7 @@ src/
 │   ├── deliveries/   # Owner: deliveries, schedule, set off, share location, handover, return
 │   ├── owner/        # Owner: vehicles (register, details, edit, blocked dates), bookings, earnings
 │   ├── payments/     # Payment history; checkout return
+│   ├── notifications.tsx # Inbox and email/push preferences
 │   └── verification.tsx  # Date of birth, ID and licence upload
 ├── context/          # AuthProvider / useAuth
 ├── components/       # Reusable UI (ui/) and domain components

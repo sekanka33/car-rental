@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from app.api.router import api_router
 from app.core.config import API_VERSION, Settings, get_settings
@@ -17,10 +18,29 @@ from app.db.session import build_engine, build_session_factory
 from app.integrations.email import EmailSender, build_email_sender
 from app.integrations.maps import MapsProvider, build_maps_provider
 from app.integrations.payments import PaymentProvider, build_payment_provider
+from app.integrations.push import PushProvider, build_push_provider
 from app.integrations.storage import DocumentStorage, LocalDocumentStorage
 from app.schemas.common import ErrorResponse
+from app.services.notifications import dispatch_all
 
 logger = logging.getLogger(__name__)
+
+
+async def notification_worker(app: FastAPI) -> None:
+    """Send due notifications every NOTIFICATION_WORKER_SECONDS. Several API processes can
+    run it at once: deliveries are claimed with SKIP LOCKED."""
+    settings = app.state.settings
+
+    def run_once() -> None:
+        with app.state.session_factory() as session:
+            dispatch_all(session, settings, app.state.email_sender, app.state.push_provider)
+
+    while True:
+        try:
+            await run_in_threadpool(run_once)
+        except Exception:  # noqa: BLE001 - keep the worker alive; the next round retries
+            logger.exception("Notification worker round failed")
+        await asyncio.sleep(settings.notification_worker_seconds)
 
 
 def create_app(
@@ -29,6 +49,7 @@ def create_app(
     document_storage: DocumentStorage | None = None,
     payment_provider: PaymentProvider | None | object = ...,
     maps_provider: MapsProvider | None | object = ...,
+    push_provider: PushProvider | None | object = ...,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -41,7 +62,14 @@ def create_app(
     async def lifespan(started: FastAPI) -> AsyncIterator[None]:
         logger.info("Starting %s (%s)", settings.app_name, settings.app_env.value)
         started.state.tracking_hub.bind(asyncio.get_running_loop())
+        worker = (
+            asyncio.create_task(notification_worker(started))
+            if settings.notification_worker_seconds > 0
+            else None
+        )
         yield
+        if worker is not None:
+            worker.cancel()
         engine.dispose()
 
     docs = settings.docs_enabled
@@ -78,6 +106,9 @@ def create_app(
         build_maps_provider(settings) if maps_provider is ... else maps_provider
     )
     app.state.tracking_hub = TrackingHub()
+    app.state.push_provider = (
+        build_push_provider(settings) if push_provider is ... else push_provider
+    )
 
     if settings.cors_origins:
         app.add_middleware(

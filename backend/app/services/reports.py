@@ -17,6 +17,7 @@ from app.models import (
     Booking,
     Delivery,
     DeliveryException,
+    NotificationDelivery,
     Payment,
     Refund,
     Role,
@@ -27,6 +28,7 @@ from app.models import (
 )
 from app.models.enums import (
     BookingStatus,
+    DeliveryAttemptStatus,
     DeliveryStatus,
     RefundStatus,
     RoleName,
@@ -71,6 +73,7 @@ class Overview:
     deliveries_needing_attention: int
     refunds_pending: int
     refunds_failed: int
+    notifications_failed: int
     bookings_upcoming: int
     bookings_under_way: int
     users_by_role: dict[RoleName, int]
@@ -135,6 +138,12 @@ def overview(session: Session, *, today: date | None = None) -> Overview:
         deliveries_needing_attention=attention or 0,
         refunds_pending=refunds.get(RefundStatus.PENDING, 0),
         refunds_failed=refunds.get(RefundStatus.FAILED, 0),
+        notifications_failed=session.scalar(
+            select(func.count())
+            .select_from(NotificationDelivery)
+            .where(NotificationDelivery.status == DeliveryAttemptStatus.FAILED)
+        )
+        or 0,
         bookings_upcoming=sum(bookings.get(s, 0) for s in UPCOMING),
         bookings_under_way=sum(bookings.get(s, 0) for s in UNDER_WAY),
         users_by_role={role: roles.get(role, 0) for role in RoleName},

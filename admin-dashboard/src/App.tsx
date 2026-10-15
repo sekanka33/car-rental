@@ -7,6 +7,7 @@ import { AuditPage } from './pages/audit';
 import { BookingDetailPage, BookingsPage } from './pages/bookings';
 import { DeliveriesPage, DeliveryDetailPage } from './pages/deliveries';
 import { LoginPage } from './pages/login';
+import { NotificationsPage } from './pages/notifications';
 import { OverviewPage } from './pages/overview';
 import { PaymentsPage } from './pages/payments';
 import { UsersPage } from './pages/users';
@@ -31,6 +32,7 @@ export function AppRoutes() {
         <Route path="deliveries" element={<DeliveriesPage />} />
         <Route path="deliveries/:id" element={<DeliveryDetailPage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="notifications" element={<NotificationsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

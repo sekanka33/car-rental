@@ -30,6 +30,7 @@ from app.models.enums import (
     VehicleDocumentType,
     VehicleStatus,
 )
+from app.services import notify_events
 from app.services.audit import record_audit
 from app.services.uploads import DOCUMENT_TYPES, PHOTO_TYPES, InvalidUploadError, check_upload
 from app.services.verification import today_in_south_africa
@@ -576,6 +577,7 @@ def approve_vehicle(session: Session, *, reviewer: User, vehicle_id: uuid.UUID) 
         entity_id=vehicle.id,
         changes={"status": {"from": "PENDING_APPROVAL", "to": "APPROVED"}},
     )
+    notify_events.vehicle_reviewed(session, vehicle, "approved", None)
     session.commit()
     return get_vehicle(session, vehicle.id)
 
@@ -594,6 +596,7 @@ def reject_vehicle(
         entity_id=vehicle.id,
         changes={"status": {"from": "PENDING_APPROVAL", "to": "REJECTED"}, "reason": reason},
     )
+    notify_events.vehicle_reviewed(session, vehicle, "rejected", reason)
     session.commit()
     return get_vehicle(session, vehicle.id)
 
@@ -617,6 +620,7 @@ def suspend_vehicle(
         entity_id=vehicle.id,
         changes={"status": {"from": previous, "to": "SUSPENDED"}, "reason": reason},
     )
+    notify_events.vehicle_reviewed(session, vehicle, "suspended", reason)
     session.commit()
     return get_vehicle(session, vehicle.id)
 
@@ -638,6 +642,7 @@ def reinstate_vehicle(session: Session, *, admin: User, vehicle_id: uuid.UUID) -
         entity_id=vehicle.id,
         changes={"status": {"from": "SUSPENDED", "to": target}},
     )
+    notify_events.vehicle_reviewed(session, vehicle, "reinstated", None)
     session.commit()
     return get_vehicle(session, vehicle.id)
 

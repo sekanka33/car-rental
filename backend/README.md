@@ -330,6 +330,56 @@ Read-only endpoints behind the admin dashboard (`admin-dashboard/`).
 subtracted. Months are calendar months in South African time. (Owner earnings in Stage 14 count
 by rental start instead; the two answer different questions.)
 
+### Notifications (Stage 16)
+
+Users are told about booking, payment, verification, vehicle-review, delivery, cancellation and
+return events in the app's inbox, by email and by push (FR-36).
+
+**How it works (`app/services/notifications.py`, `notify_events.py`):**
+- **Outbox:** each event writes a `notifications` row (and one `notification_deliveries` row
+  per channel) in the same transaction as the change, so nothing is lost and nothing is sent for
+  a change that rolled back. A `dedupe_key` makes each event notify once (webhook retries,
+  reconciliation and repeated code paths are harmless).
+- **Sending:** the API process runs a worker every `NOTIFICATION_WORKER_SECONDS` (default 15).
+  Deliveries are claimed with `FOR UPDATE SKIP LOCKED`, so several API processes or a cron job
+  (`python -m app.cli send-notifications`) never send the same message twice. Failures are
+  retried after 1 min, 5 min, 30 min and 2 h; after `NOTIFICATION_MAX_ATTEMPTS` the delivery is
+  `FAILED` and appears in the admin dashboard, where it can be retried.
+- **Preferences:** users can turn email and push off; the inbox always keeps everything.
+  **Payment receipts, refunds and cancellations are always emailed** (`essential`). Suspended
+  accounts get nothing sent.
+- **Push:** Expo Push Service (`app/integrations/push.py`). A `DeviceNotRegistered` ticket
+  disables that token. Push receipts (the second, delayed check) are not fetched yet.
+- **Account emails** (email verification, password reset) are still sent directly, as before.
+
+| Event | Who | Email | Notes |
+|-------|-----|-------|-------|
+| Booking confirmed (payment verified) | renter, owner | renter: always | renter receipt with amount; owner asked to confirm the delivery time |
+| Hold expired | renter | optional | |
+| Booking cancelled | renter, owner (if it was paid) | renter: always | says who cancelled, the reason (admin) and the refund |
+| Refund processed | renter | always | once per refund |
+| Verification decision | renter | optional | includes the reviewer's note |
+| Vehicle approved / rejected / suspended / reinstated | owner | optional | includes the reason |
+| Delivery scheduled, rescheduled, on the way, handed over, problem reported | renter (+ assignee when rescheduled) | optional | delay vs stopped worded differently |
+| Delivery reassigned | new assignee | optional | |
+| Renter ready to return | assignee | optional | |
+| Return recorded | renter | optional | |
+| Reminder: rental ends within 24 h | renter | optional | `send-reminders` |
+| Reminder: delivery time not confirmed 36 h before start | assignee | optional | `send-reminders` |
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `GET /api/v1/notifications/me[?unread_only=true]` | signed in | Inbox, newest first, with the unread count |
+| `POST /api/v1/notifications/me/{id}/read`, `POST …/read-all` | signed in | Mark read (your own only) |
+| `GET`/`PUT /api/v1/notifications/me/preferences` | signed in | `email_enabled`, `push_enabled` |
+| `POST /api/v1/notifications/me/push-tokens` | signed in | Register this phone's Expo token (after each sign-in); a token moves to the newest account |
+| `POST /api/v1/notifications/me/push-tokens/remove` | signed in | Stop pushes to this phone (before signing out) |
+| `GET /api/v1/admin/notifications[?status=]` | `ADMIN` | Deliveries (default `FAILED`) with the user, message and last error |
+| `POST /api/v1/admin/notifications/{id}/retry` | `ADMIN` | Send a failed delivery again |
+
+Operator commands: `send-reminders` (hourly), `send-notifications` (only if the worker is off),
+`purge-notifications` (daily; deletes notifications older than `NOTIFICATION_RETENTION_DAYS`).
+
 ### Payments (Paystack)
 
 | Endpoint | Access | Purpose |
@@ -431,6 +481,11 @@ See [.env.example](.env.example).
 | `PAYSTACK_BASE_URL` | `https://api.paystack.co` | Paystack API base URL |
 | `PAYMENT_CALLBACK_URL` | *(none)* | Where checkout returns the customer (`?payment_id=` is appended); web preview: `http://localhost:8081/payments/return` |
 | `PAYSTACK_PUBLIC_KEY` | *(none)* | Not used by the backend |
+| `PUSH_ENABLED` | `true` | Send push notifications through the Expo Push Service |
+| `EXPO_ACCESS_TOKEN` | *(none)* | Only if enhanced push security is on in EAS |
+| `NOTIFICATION_WORKER_SECONDS` | `15` | How often the API sends due notifications; `0` turns the worker off |
+| `NOTIFICATION_MAX_ATTEMPTS` | `5` | Attempts per email or push before it is `FAILED` |
+| `NOTIFICATION_RETENTION_DAYS` | `180` | Notifications kept this long (`purge-notifications`) |
 | `GOOGLE_MAPS_API_KEY` | *(none)* | Server key for the Geocoding and Routes APIs (restrict to those APIs). Empty: tracking without ETA |
 | `LOCATION_MIN_INTERVAL_SECONDS` | `5` | Minimum time between location updates per delivery (1–60) |
 | `LOCATION_MAX_AGE_SECONDS` | `600` | Older location fixes are rejected (30–3600) |
@@ -449,19 +504,19 @@ app/
 │   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
 │   ├── realtime.py    # TrackingHub: in-process fan-out of live delivery messages
 │   └── logging.py
-├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds, reconcile-payments, purge-locations)
+├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds, reconcile-payments, purge-locations, send-notifications, send-reminders, purge-notifications)
 ├── demo_data.py       # DEVELOPMENT-ONLY demo marketplace data
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), dashboards, admin_* (incl. admin_reports), health
+│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), dashboards, notifications, admin_* (incl. admin_reports), health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
-├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments, Google Maps)
+├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments, Google Maps, Expo push)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, dashboards, reports, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, dashboards, reports, notifications, notify_events, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

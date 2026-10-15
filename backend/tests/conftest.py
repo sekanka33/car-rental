@@ -60,6 +60,8 @@ def make_settings(**overrides: object) -> Settings:
         "jwt_secret_key": TEST_JWT_SECRET,
         "document_hash_key": TEST_DOCUMENT_HASH_KEY,
         "document_storage_dir": TEST_DOCUMENT_DIR,
+        "notification_worker_seconds": 0,  # tests dispatch explicitly
+        "push_enabled": False,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

@@ -15,6 +15,7 @@ from app.api.routes import (
     health,
     live,
     marketplace,
+    notifications,
     owner_deliveries,
     owner_vehicles,
     owners,
@@ -42,3 +43,4 @@ api_router.include_router(admin_deliveries.router)
 api_router.include_router(admin_reports.router)
 api_router.include_router(live.router)
 api_router.include_router(dashboards.router)
+api_router.include_router(notifications.router)

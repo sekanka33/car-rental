@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.integrations.email import EmailSender
 from app.integrations.maps import MapsProvider
 from app.integrations.payments import PaymentProvider
+from app.integrations.push import PushProvider
 from app.integrations.storage import DocumentStorage
 from app.models import User
 from app.models.enums import RoleName
@@ -53,6 +54,13 @@ def get_maps_provider(request: Request) -> MapsProvider | None:
 
 
 MapsProviderDep = Annotated[MapsProvider | None, Depends(get_maps_provider)]
+
+
+def get_push_provider(request: Request) -> PushProvider | None:
+    return request.app.state.push_provider
+
+
+PushProviderDep = Annotated[PushProvider | None, Depends(get_push_provider)]
 
 
 def get_tracking_hub(request: Request) -> TrackingHub:

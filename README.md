@@ -4,7 +4,7 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–15 complete. Renters can register and log in in the
+> **Current state:** Stages 01–16 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
 > car and pay for it** (Paystack checkout, verified by the backend), follow its
 > **delivery live on a map with an ETA**, confirm the handover and say when they are ready to return it. Owners
@@ -118,7 +118,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 13 | Google Maps and Live Tracking | [x] COMPLETE | backend 572/572; mobile 54/54; 18/18 mutations caught (3 gaps closed); live E2E 47/47 |
 | 14 | Customer and Owner Dashboards | [x] COMPLETE | backend 583/583; mobile 89/89; 23/24 mutations caught (1 equivalent); API E2E 39/39; browser E2E 25/25 |
 | 15 | Administrator Dashboard | [x] COMPLETE | backend 595/595; admin 32/32; 23/23 mutations caught; browser E2E 27/27 |
-| 16 | Notifications and Communication | NOT STARTED | Not tested |
+| 16 | Notifications and Communication | [x] COMPLETE | mobile 99/99; admin 33/33; 22/22 mutations caught; live E2E 21/21 |
 | 17 | Security, Testing, and Quality Assurance | NOT STARTED | Not tested |
 | 18 | Deployment and Documentation | NOT STARTED | Not tested |
 
@@ -1102,6 +1102,22 @@ Outstanding limitations:
 
 Next stage:
 - Stage 16: Notifications and Communication.
+
+### Stage 16: Notifications and Communication
+
+Status: COMPLETE (2026-10-15)
+
+Implemented: an in-app inbox, email and Expo push for booking, payment, refund, cancellation, verification, vehicle-review, delivery and return events, plus return and delivery-time reminders. Notifications are written in the same transaction as the change (outbox, one per event via a dedupe key) and sent by a worker inside the API (`FOR UPDATE SKIP LOCKED`, retries after 1/5/30 min and 2 h, then FAILED for admins to retry). Users can turn email and push off; payment receipts, refunds and cancellations are always emailed. Mobile: inbox with unread badge, preferences, push registration (prompt only on request), tapping a push opens its screen. Admin dashboard: Notifications page with retry and a failed count. New CLI commands: `send-reminders`, `send-notifications`, `purge-notifications`. Migration `b9840115d8b9`.
+
+Verification: backend pytest full suite green (41 new notification tests incl. 4 parallel workers sending each email exactly once); mobile 99/99; admin 33/33; 22/22 mutations caught (3 test gaps closed); live E2E 21/21 with the real worker, a file-backed mailer and a local Expo stand-in (confirmation by email and push within seconds, uninstalled phone disabled, email opt-out respected, SMTP outage retried then FAILED, admin retry delivered the essential email). Bug found and fixed: email links lost one slash of `carrental://`.
+
+Outstanding limitations:
+- Not tested with a real SMTP provider, real Expo project or a phone (needs your accounts). Push needs a development/store build with an EAS project ID; Expo Go on Android cannot receive remote push.
+- Expo push receipts (delayed delivery errors) are not fetched yet.
+- `send-reminders` (hourly) and `purge-notifications` (daily) must be scheduled.
+
+Next stage:
+- Stage 17: Security, Testing, and Quality Assurance.
 
 ## 8. Prerequisites
 

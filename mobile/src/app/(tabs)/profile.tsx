@@ -77,6 +77,8 @@ export default function ProfileScreen() {
         <Text className="text-base text-ink-muted">{user.email}</Text>
       </View>
 
+      <Button label="Notifications" variant="secondary" className="mt-6" onPress={() => router.push('/notifications')} />
+
       <Text className="mb-1 mt-8 text-sm font-semibold uppercase text-ink-subtle">Account</Text>
       <Row label="Account type">
         <Text className="text-base text-ink">{user.roles.map((r) => r.toLowerCase()).join(', ')}</Text>
