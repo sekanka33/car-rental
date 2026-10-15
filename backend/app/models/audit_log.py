@@ -14,7 +14,7 @@ class AuditLog(Base):
 
     `changes` must never contain secrets or full ID/licence numbers (mask them first).
     """
-    
+
     __tablename__ = "audit_logs"
     __table_args__ = (
         Index("ix_audit_logs_entity", "entity_type", "entity_id"),
@@ -23,7 +23,7 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     # RESTRICT: users with audit history are deactivated/anonymised, never hard-deleted.
-    # (SET NULL would need an UPDATE, which the append-only trigger blocks.)
+    #  which the append-only trigger blocks.)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
