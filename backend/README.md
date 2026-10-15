@@ -261,6 +261,43 @@ when payment confirms the booking. Rules: BR-7 in
 To give up on a failed delivery, cancel the booking (`POST /api/v1/admin/bookings/{id}/cancel`);
 it is refunded in full. Every action is audited (`delivery.*`).
 
+### Live tracking (Stage 13)
+
+Location is shared only by the assigned delivery person, and only while the delivery is
+`EN_ROUTE` (BR-7.2–7.5). Watchers get the latest position and a driving ETA over a WebSocket.
+
+| Endpoint | Access | Purpose |
+|----------|--------|---------|
+| `POST /api/v1/owners/me/deliveries/{id}/location` | `OWNER` (assigned, else 404) | `latitude`, `longitude`, `recorded_at` (timezone required), optional `accuracy_m`, `heading`, `speed_mps`. 204; 409 unless `EN_ROUTE`; 429 more than once per `LOCATION_MIN_INTERVAL_SECONDS`; 422 for a fix in the future or older than `LOCATION_MAX_AGE_SECONDS` |
+| `WS /api/v1/deliveries/{id}/live` | renter (own), assigned person, `ADMIN` | Live status, location and ETA |
+
+WebSocket protocol (JSON text frames):
+
+1. Within 10 s of connecting, send `{"type": "auth", "token": "<access token>"}`. The token is
+   never put in the URL, so it stays out of proxy and server logs.
+2. The server sends a `snapshot`, then `status` and `location` messages (same shape:
+   `status`, `booking_status`, `scheduled_for`, `tracking_active`, `location`, `eta`), and
+   `ping` every 25 s. Send `{"type": "ping"}` to get a `pong`.
+3. Close codes: `4401` not authenticated or the token expired (refresh and reconnect),
+   `4403` not allowed (also for unknown deliveries), `4000` tracking ended (delivered,
+   cancelled or failed). Access is re-checked on every status change, so a reassigned
+   owner is disconnected.
+
+Location and ETA are only shown for the current trip; after delivery they are hidden.
+**ETA:** with `GOOGLE_MAPS_API_KEY` set, the drop-off address is geocoded once (Geocoding
+API, `region=za`) and the Routes API gives a traffic-aware driving time at most every
+`ETA_REFRESH_SECONDS` (field mask `routes.duration,routes.distanceMeters`, so only the basic
+SKU is billed). Without a key, or if Google fails, tracking works with no ETA.
+
+**Retention:** run `python -m app.cli purge-locations` daily. It deletes location history
+older than `LOCATION_RETENTION_DAYS` (default 90, BR-7.5), except for deliveries still on the
+way.
+
+**Scaling:** the broadcaster (`app/core/realtime.py`) is in-process, so run **one API
+process** (one uvicorn worker) for now. More instances need a shared channel (PostgreSQL
+`LISTEN/NOTIFY` or Redis pub/sub) feeding the same `publish`; see
+[docs/architecture.md](../docs/architecture.md).
+
 ### Payments (Paystack)
 
 | Endpoint | Access | Purpose |
@@ -362,6 +399,11 @@ See [.env.example](.env.example).
 | `PAYSTACK_BASE_URL` | `https://api.paystack.co` | Paystack API base URL |
 | `PAYMENT_CALLBACK_URL` | *(none)* | Where checkout returns the customer (`?payment_id=` is appended); web preview: `http://localhost:8081/payments/return` |
 | `PAYSTACK_PUBLIC_KEY` | *(none)* | Not used by the backend |
+| `GOOGLE_MAPS_API_KEY` | *(none)* | Server key for the Geocoding and Routes APIs (restrict to those APIs). Empty: tracking without ETA |
+| `LOCATION_MIN_INTERVAL_SECONDS` | `5` | Minimum time between location updates per delivery (1–60) |
+| `LOCATION_MAX_AGE_SECONDS` | `600` | Older location fixes are rejected (30–3600) |
+| `ETA_REFRESH_SECONDS` | `60` | Minimum time between Routes API calls per delivery (15–600) |
+| `LOCATION_RETENTION_DAYS` | `90` | Location history kept this long (`purge-locations`) |
 
 ## Structure
 
@@ -373,20 +415,21 @@ app/
 │   ├── errors.py      # AppError (+ NotFound/Authentication/PermissionDenied) and handlers
 │   ├── security.py    # Argon2id hashing, JWT access tokens, random token helpers
 │   ├── identity.py    # SA ID number checks (Luhn, birth date), HMAC, age calculation
+│   ├── realtime.py    # TrackingHub: in-process fan-out of live delivery messages
 │   └── logging.py
-├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds, reconcile-payments)
+├── cli.py             # Operator commands (create-admin, seed-demo-data, expire-holds, reconcile-payments, purge-locations)
 ├── demo_data.py       # DEVELOPMENT-ONLY demo marketplace data
 ├── api/
 │   ├── deps.py        # get_current_user, require_roles, session/settings dependencies
 │   ├── router.py      # Mounts route modules under /api/v1
-│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, admin_*, health
+│   └── routes/        # auth, users, owners, owner_vehicles, owner_deliveries, customers, marketplace, bookings, payments, live (WebSocket), admin_*, health
 ├── db/
 │   ├── base.py        # Declarative Base, naming convention, Money type, mixins
 │   └── session.py     # Engine, session factory, get_db dependency
-├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments)
+├── integrations/      # External services behind interfaces (email, private document storage, Paystack payments, Google Maps)
 ├── models/            # SQLAlchemy models (one module per aggregate) and enums
 ├── repositories/      # Database queries
-├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, uploads, audit
+├── services/          # Business logic: auth, accounts, verification, eligibility, vehicles, pricing, marketplace, bookings, payments, deliveries, tracking, uploads, audit
 └── schemas/           # Pydantic request and response models
 migrations/            # Alembic environment and versions/
 tests/                 # Pytest suite; tests/db/ runs against real PostgreSQL

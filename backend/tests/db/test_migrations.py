@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "handover_records",
     "handover_photos",
     "delivery_exceptions",
+    "delivery_location_updates",
 }
 
 pytestmark = requires_db

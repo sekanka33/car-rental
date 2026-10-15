@@ -56,6 +56,7 @@ def hash_token(token: str) -> str:
 class AccessTokenClaims:
     user_id: uuid.UUID
     token_version: int
+    expires_at: datetime
 
 
 class InvalidTokenError(Exception):
@@ -101,7 +102,9 @@ def decode_access_token(
         if payload["type"] != ACCESS_TOKEN_TYPE:
             raise InvalidTokenError("Wrong token type")
         return AccessTokenClaims(
-            user_id=uuid.UUID(payload["sub"]), token_version=int(payload["ver"])
+            user_id=uuid.UUID(payload["sub"]),
+            token_version=int(payload["ver"]),
+            expires_at=datetime.fromtimestamp(int(payload["exp"]), UTC),
         )
     except (jwt.PyJWTError, ValueError, TypeError, KeyError) as exc:
         raise InvalidTokenError(str(exc)) from exc

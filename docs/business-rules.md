@@ -96,7 +96,7 @@ PENDING_PAYMENT ─► CONFIRMED ─► DELIVERY_SCHEDULED ─► IN_TRANSIT ─
 2. Only the assigned delivery person (owner or driver) can post location updates or change the delivery status, and only while the delivery is active.
 3. Only the booking's renter, the assigned delivery person, and administrators can view a delivery's location.
 4. Location sharing stops when the delivery is `DELIVERED`, `CANCELLED`, or `FAILED`. Updates sent after that are rejected.
-5. Location data is kept only as long as needed for disputes and audits (retention period to be set; proposed 90 days).
+5. Location data is kept only as long as needed for disputes and audits. **Stage 13 default: 90 days** (`LOCATION_RETENTION_DAYS`), deleted by the daily `purge-locations` command; history of a delivery still on its way is never deleted. Watchers see only the latest position of the current trip, and nothing once the delivery has ended.
 6. Handover and return records capture time, odometer, fuel level, condition notes, and photos.
 7. **Assignment (OPEN-3 default, Stage 12):** the vehicle owner delivers. Payment confirmation creates the delivery (`PENDING_SCHEDULE`) assigned to the owner. An administrator can reassign an unfinished delivery to another **active owner account**; there is no `DRIVER` role.
 8. **Delivery states:** `PENDING_SCHEDULE` → `SCHEDULED` → `EN_ROUTE` → `DELIVERED`; any active state → `FAILED` (exception) or `CANCELLED`; `FAILED` → `SCHEDULED` (administrator) or `CANCELLED`. Booking states follow: scheduling → `DELIVERY_SCHEDULED`, setting off → `IN_TRANSIT`, handover → `DELIVERED`.
@@ -107,6 +107,7 @@ PENDING_PAYMENT ─► CONFIRMED ─► DELIVERY_SCHEDULED ─► IN_TRANSIT ─
 13. **Exceptions:** the delivery person reports `DELAY` (informational), `RENTER_UNAVAILABLE`, `ADDRESS_PROBLEM`, `VEHICLE_PROBLEM` or `OTHER` on an active delivery. Anything but a delay stops it (`FAILED`) until an administrator reschedules it or cancels the booking (refunded in full, BR-6). The renter sees the notes.
 14. **Contact details:** the delivery person sees the renter's full name, phone number and address; the renter sees only the delivery person's first name.
 15. Every delivery action is audited (`delivery.*`). Implemented in `app/services/deliveries.py` (Stage 12).
+16. **Tracking (Stage 13):** location is accepted only while the delivery is `EN_ROUTE`, at most once every 5 s, and fixes in the future or older than 10 minutes are rejected. Implemented in `app/services/tracking.py`.
 
 ## BR-8 Documents and privacy (POPIA)
 1. Identity, licence, and vehicle documents are stored privately (never in a public bucket or path) and served only through authorised, short-lived URLs.

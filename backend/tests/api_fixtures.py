@@ -39,17 +39,25 @@ def payment_provider():
 
 
 @pytest.fixture
+def maps_provider():
+    """No maps provider (no ETA) unless a test package overrides this fixture."""
+    return None
+
+
+@pytest.fixture
 def api_app(
     db_session: Session,
     outbox: InMemoryEmailSender,
     storage: InMemoryDocumentStorage,
     payment_provider,
+    maps_provider,
 ) -> FastAPI:
     app = create_app(
         make_settings(),
         email_sender=outbox,
         document_storage=storage,
         payment_provider=payment_provider,
+        maps_provider=maps_provider,
     )
 
     def _test_db() -> Iterator[Session]:

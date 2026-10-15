@@ -142,6 +142,20 @@ export async function apiRequest<T>(method: string, path: string, options: Reque
   return (await response.json()) as T;
 }
 
+/** WebSocket URL for an API path (http → ws, https → wss). */
+export function websocketUrl(path: string): string {
+  return `${API_BASE_URL.replace(/^http/, 'ws')}${path}`;
+}
+
+/**
+ * Access token for a WebSocket, which cannot use the automatic retry above. With `renew`, the
+ * session is refreshed first (after the server closed the socket because the token expired).
+ */
+export async function getAccessToken({ renew = false }: { renew?: boolean } = {}): Promise<string | null> {
+  if (renew) return refreshSession();
+  return (await loadTokens())?.accessToken ?? null;
+}
+
 export function apiGet<T>(
   path: string,
   params?: Record<string, QueryValue>,

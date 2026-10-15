@@ -1,5 +1,6 @@
 """FastAPI application factory. Run with: uvicorn app.main:app --reload"""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,8 +12,10 @@ from app.api.router import api_router
 from app.core.config import API_VERSION, Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.realtime import TrackingHub
 from app.db.session import build_engine, build_session_factory
 from app.integrations.email import EmailSender, build_email_sender
+from app.integrations.maps import MapsProvider, build_maps_provider
 from app.integrations.payments import PaymentProvider, build_payment_provider
 from app.integrations.storage import DocumentStorage, LocalDocumentStorage
 from app.schemas.common import ErrorResponse
@@ -25,6 +28,7 @@ def create_app(
     email_sender: EmailSender | None = None,
     document_storage: DocumentStorage | None = None,
     payment_provider: PaymentProvider | None | object = ...,
+    maps_provider: MapsProvider | None | object = ...,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -34,8 +38,9 @@ def create_app(
     engine = build_engine(settings.database_url.get_secret_value(), echo=settings.database_echo)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(started: FastAPI) -> AsyncIterator[None]:
         logger.info("Starting %s (%s)", settings.app_name, settings.app_env.value)
+        started.state.tracking_hub.bind(asyncio.get_running_loop())
         yield
         engine.dispose()
 
@@ -68,6 +73,11 @@ def create_app(
     app.state.payment_provider = (
         build_payment_provider(settings) if payment_provider is ... else payment_provider
     )
+
+    app.state.maps_provider = (
+        build_maps_provider(settings) if maps_provider is ... else maps_provider
+    )
+    app.state.tracking_hub = TrackingHub()
 
     if settings.cors_origins:
         app.add_middleware(

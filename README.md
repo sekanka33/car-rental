@@ -4,12 +4,12 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–12 complete. Renters can register and log in in the
+> **Current state:** Stages 01–13 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
 > car and pay for it** (Paystack checkout, verified by the backend), follow its
-> **delivery**, confirm the handover and say when they are ready to return it. Owners
-> deliver (scheduling, handover and return records with photos, problem reports) through
-> the API; administrators reassign and resolve failed deliveries. Payments run in **test
+> **delivery live on a map with an ETA**, confirm the handover and say when they are ready to return it. Owners
+> share their location from the app while on the way, and handle the rest of the delivery
+> (scheduling, handover and return records with photos, problem reports) through the API; administrators reassign and resolve failed deliveries. Payments run in **test
 > mode only** until live keys are approved. Commands for
 > later stages are marked *planned* and will be confirmed when each stage is implemented.
 
@@ -39,7 +39,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 | Area | Technology |
 |------|------------|
 | Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, expo-image, ESLint 9 (`eslint-config-expo`), Jest 29 + jest-expo 57 + React Native Testing Library 14. Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
-| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. Planned: WebSockets (Stage 13) |
+| Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. WebSockets (Starlette, Stage 13) |
 | Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
 | Payments | Paystack (ZAR), behind a `PaymentProvider` interface; test keys only until live payments are approved (OPEN-8). Mobile checkout via expo-web-browser |
@@ -114,7 +114,7 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 10 | Booking and Availability | [x] COMPLETE | backend 426/426 (5 consecutive full runs); mobile 36/36; 30/30 concurrency stress; full renter journey E2E |
 | 11 | Payment Integration | [x] COMPLETE | backend 476/476; mobile 40/40; 9/10 mutations caught (1 equivalent); live E2E 16/16 against a Paystack stand-in |
 | 12 | Delivery Management | [x] COMPLETE | backend 533/533; mobile 44/44; 15/17 mutations caught (2 equivalent); live E2E 20/20 |
-| 13 | Google Maps and Live Tracking | NOT STARTED | Not tested |
+| 13 | Google Maps and Live Tracking | [x] COMPLETE | backend 572/572; mobile 54/54; 18/18 mutations caught (3 gaps closed); live E2E 47/47 |
 | 14 | Customer and Owner Dashboards | NOT STARTED | Not tested |
 | 15 | Administrator Dashboard | NOT STARTED | Not tested |
 | 16 | Notifications and Communication | NOT STARTED | Not tested |
@@ -948,6 +948,59 @@ Outstanding limitations:
 Next stage:
 - Stage 13: Google Maps and Live Tracking.
 
+### Stage 13: Google Maps and Live Tracking
+
+Status: COMPLETE (2026-10-15)
+
+Defaults chosen (confirm or change): **location history kept 90 days** (`LOCATION_RETENTION_DAYS`, BR-7.5); **one API process** with an in-memory broadcaster, PostgreSQL `LISTEN/NOTIFY` when a second instance is needed (architecture decision). No Google Maps keys were supplied, so the code runs without them: no ETA on the server, and the map uses Expo Go's built-in key (Android) or Apple Maps (iOS).
+
+Implemented:
+
+**Backend:**
+- **Location updates** (`POST /owners/me/deliveries/{id}/location`): only the assigned delivery person, only while `EN_ROUTE` (409 otherwise), at most one every 5 s (429), fixes in the future or older than 10 min rejected (422), coordinates range-checked and rounded to 6 decimals.
+- **WebSocket** `WS /deliveries/{id}/live`: the access token is sent in the first message, never in the URL. Snapshot on connect, then `status` and `location` pushes, server pings every 25 s, client ping/pong. Close codes 4401 (auth/expiry), 4403 (not allowed, also for unknown deliveries), 4000 (tracking ended). Access is re-checked on every status change (reassignment disconnects the previous owner at once; a suspended or logged-out user is disconnected at the next status change or when the 15-minute access token expires, whichever comes first).
+- **Who sees what:** the renter, the assigned person and administrators. Only the latest fix of the current trip is shown; nothing after delivery, cancellation or failure.
+- **Every delivery status change is pushed:** schedule, start, handover, return, exceptions, admin reassign and reschedule, renter and admin cancellation.
+- **ETA** (`app/integrations/maps.py`): the drop-off address is geocoded once (Geocoding API, `region=za`); the Routes API (traffic-aware, field mask limited to duration and distance) is called at most every `ETA_REFRESH_SECONDS` per delivery. Google failures leave the ETA empty and never fail a location update.
+- **Retention:** `python -m app.cli purge-locations` deletes history older than 90 days, never for a delivery still on its way.
+- **Migration `cb06c3243b02`:** `delivery_location_updates` (range CHECKs, index by delivery and time) and drop-off coordinates and ETA columns on `deliveries`.
+
+**Mobile:**
+- **Renter:** booking detail shows the car on a map (`react-native-maps`; a Google Maps link on web) with "Arriving in about N min (x km)" and "Updated … ago", a notice when no position has arrived for a minute, reconnect with backoff (1 s → 30 s), one session refresh on 4401, and it stops when tracking ends.
+- **Owner:** Profile → **My deliveries** → **Set off now** → **Share my location** (foreground permission via `expo-location`, sends at most every 10 s, stops itself when the delivery is no longer on its way). No background location.
+- Maps keys for builds come from `GOOGLE_MAPS_ANDROID_API_KEY` / `GOOGLE_MAPS_IOS_API_KEY` through `app.config.js`, never from `EXPO_PUBLIC_*`.
+
+Files changed:
+- Backend:
+  - New: `app/services/tracking.py`, `app/api/routes/live.py`, `app/core/realtime.py`, `app/integrations/maps.py`, `migrations/versions/2026_10_13_1625-cb06c3243b02_add_delivery_location_updates_and_eta.py`, `tests/tracking/`
+  - Modified: `app/main.py`, `app/api/{deps,router}.py`, `app/api/routes/{owner_deliveries,admin_deliveries,bookings,admin_bookings}.py`, `app/core/{config,security,logging}.py`, `app/db/session.py`, `app/models/{delivery,__init__}.py`, `app/schemas/deliveries.py`, `app/cli.py`, `.env.example`, `tests/api_fixtures.py`, `tests/db/test_migrations.py`
+- Mobile:
+  - New: `app.config.js`, `src/app/deliveries/{index,[id]}.tsx`, `src/components/{live-tracking,live-map,live-map.native}.tsx`, `src/hooks/{use-delivery-tracking,use-location-sharing}.ts`, `src/services/owner-deliveries.ts`, `src/types/tracking.ts`, `__tests__/tracking.test.tsx`
+  - Changed: `app.json`, `package.json`, `.env.example`, `jest.setup.ts`, `src/lib/api.ts`, `src/components/delivery-section.tsx`, `src/app/_layout.tsx`, `src/app/(tabs)/profile.tsx`
+- Docs: all READMEs, `docs/architecture.md`, `docs/business-rules.md` (BR-7.5, BR-7.16), `docs/development-roadmap.md`
+
+Verification:
+- **Backend** `pytest -ra`: **572 passed, 0 failed** (39 new). Covered: location only while on the way and only from the assignee; input validation, rounding, rate limit, future and stale fixes; latest fix wins and an earlier trip's fixes stay hidden; ETA geocodes once, limits Routes calls, clears on failure; purge keeps recent and en-route history; WebSocket refuses bad auth, silent clients, other users and suspended users; renter follows the whole delivery; snapshot after reconnect; ended deliveries send a snapshot then close; cancellation and reassignment end the view; pings both ways; token expiry closes the socket; the Maps adapter against recorded Google response shapes; the API key stays out of logs; the broadcaster drops the oldest message for a slow watcher.
+- **Mutation checks: 18 of 18 caught**, after 3 gaps found by this check were closed with new tests. Covered: assignee-only posting, `EN_ROUTE`-only, rate limit, future and stale fixes, earlier-trip fixes hidden, renter-only watching, purge sparing en-route trips, Routes and geocode call limits, ETA hidden after the trip (gap), reassigned owner disconnected, socket closed when tracking ends, token expiry, renter and admin cancellation pushed (admin: gap), location pushed, and the broadcaster dropping the oldest message for a slow watcher (gap).
+- **Mobile:** `npm test` **54 passed** (10 new: auth in the first message, refresh once on 4401, stop on 4000/4403, backoff reconnect, cleanup on unmount, map + ETA + freshness, stale warning, reload on status change, permission refusal, sending and stopping); typecheck 0 errors; lint clean; web, Android and iOS bundles export.
+- **Live end to end, 47/47:** real uvicorn with the real Google adapter pointed at a local stand-in for the Geocoding and Routes APIs, and real WebSocket clients. It covered: every refusal close code; renter, admin and assignee watching; schedule → start → location → ETA pushed to all; 429, future, stale and out-of-range fixes; ETA not recomputed within the refresh window; the key sent as a header with the field mask; ping/pong; reconnect snapshot with location and ETA; admin reassignment disconnects the old owner (4403), who then gets 404; the new owner shares; handover pushes `DELIVERED` with location and ETA hidden and closes every socket (4000); late watchers get a snapshot then 4000; admin cancellation en route pushes `CANCELLED`; 20 concurrent watchers all receive the update. Then `purge-locations` deleted the 4 old rows and kept the en-route one.
+- `alembic upgrade` / `downgrade -1` / `upgrade` and `alembic check` clean.
+- **Problems found and fixed during the stage:**
+  - The HTTP client logged every request URL at INFO, and the Geocoding API takes its key as a query parameter, so the **Google key would have been written to the server logs**. The client logger is now held at WARNING, and a test checks the key never appears.
+  - The WebSocket test helpers could hang instead of failing: "expect a close" looped forever on a socket wrongly kept open, and a failed assertion left the socket open so teardown waited for it. Both now fail at once (`watch` is a context manager).
+  - In tests, the HTTP request and the WebSocket share one database session, so an admin cancellation with a watcher connected could race; that case is asserted at the broadcaster instead (the live E2E covers it with real separate sessions).
+
+Outstanding limitations:
+- **Not tested with real Google keys or on a physical phone or emulator.** The Geocoding and Routes calls were verified against a stand-in using Google's documented request and response shapes. Needs from you: a server key (Geocoding + Routes, IP-restricted) and, for store builds, an Android key (package + SHA-1).
+- One API process only (in-memory broadcaster). Running several uvicorn workers would split watchers from updates.
+- Location is shared only while the owner keeps the delivery screen open (no background location; needs a development build and store review justification).
+- The owner app still has no scheduling, handover or return screens (Stage 14); those stay API-only.
+- `purge-locations` must be scheduled (daily) in production, like `expire-holds` and `reconcile-payments`.
+- `expo-doctor` reports 4 Expo patch releases published since Stage 12 (`expo`, `expo-constants`, `expo-linking`, `expo-router`); not updated in this stage.
+
+Next stage:
+- Stage 14: Customer and Owner Dashboards.
+
 ## 8. Prerequisites
 
 Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
@@ -962,8 +1015,8 @@ Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
 | Docker / Compose | 29.8.1 / v5.5.1 | Local PostgreSQL (`docker compose up -d db`) |
 
 To run the mobile app on a device: the **Expo Go** app (must support SDK 57),
-or an Android emulator or iOS simulator. Needed in later stages: Google Maps
-Platform API keys (Stage 13) and Paystack **test** keys (`sk_test_…`) to exercise payments against the real sandbox.
+or an Android emulator or iOS simulator. Needed for full use: Google Maps
+Platform API keys (a server key for ETA; an Android key for store builds) and Paystack **test** keys (`sk_test_…`) to exercise payments against the real sandbox.
 
 ## 9. Installation Instructions
 
@@ -1001,6 +1054,7 @@ python -m app.cli create-admin --email you@example.com --full-name "Your Name"  
 - Production refuses to start with `EMAIL_BACKEND=console`, and `JWT_SECRET_KEY` must be at least 32 characters.
 - **Mobile:** `mobile/.env.example` contains `EXPO_PUBLIC_API_URL` (the backend URL; never put secrets in `EXPO_PUBLIC_*`).
 - Booking limits: `BOOKING_HOLD_MINUTES`, `BOOKING_MIN_LEAD_MINUTES`, `BOOKING_MAX_DAYS`, `MAX_PENDING_BOOKINGS_PER_RENTER` (backend).
+- Live tracking: `GOOGLE_MAPS_API_KEY` (server key; empty = no ETA), `LOCATION_MIN_INTERVAL_SECONDS`, `LOCATION_MAX_AGE_SECONDS`, `ETA_REFRESH_SECONDS`, `LOCATION_RETENTION_DAYS` (backend); `GOOGLE_MAPS_ANDROID_API_KEY` / `GOOGLE_MAPS_IOS_API_KEY` for mobile builds only (`mobile/.env.example`).
 - Payments: `PAYSTACK_SECRET_KEY` (empty disables online payment; only `sk_test_…` unless `ALLOW_LIVE_PAYMENTS=true`), `PAYSTACK_BASE_URL`, `PAYMENT_CALLBACK_URL` (backend).
 
 ## 11. Database Setup
@@ -1106,7 +1160,8 @@ reinstate, official price history, set price, quote); **public marketplace**
 `/admin/payments`: list, refund, reconcile); **deliveries** (`/owners/me/deliveries`:
 list, detail, schedule, start, handover, return, exceptions, photos; `/bookings/{id}/delivery`,
 `…/delivery/acknowledge`, `…/return-request`; `/admin/deliveries`: list, detail, assign,
-reschedule, resolve exception, photos); renter profile, date of birth, document upload and
+reschedule, resolve exception, photos); **live tracking** (`POST /owners/me/deliveries/{id}/location`,
+`WS /deliveries/{id}/live`); renter profile, date of birth, document upload and
 list, own-file download, and eligibility (`/customers/me/...`); admin users
 (list, suspend, reactivate) and verifications (queue, detail, audited file view,
 decision). The full tables with access rules are in
@@ -1123,7 +1178,7 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - ID and licence documents are stored privately, access is logged, and their numbers never appear in public APIs or logs (POPIA).
 - Money is stored as exact decimals in ZAR. Webhooks are HMAC-verified and de-duplicated, and a payment counts only after the backend itself verifies the reference, amount and currency with Paystack. Live payment keys are refused unless `ALLOW_LIVE_PAYMENTS=true`.
 - Deliveries can be acted on only by the assigned delivery person; renters see only their own. Handover and return photos are private, and photos are only accepted shortly after the record (no late "evidence"). The renter sees the delivery person's first name only.
-- Location sharing (Stage 13) will be limited to the assigned delivery person while a delivery is active, and visible only to the booking's renter and administrators.
+- Location is accepted only from the assigned delivery person while the car is on its way, and visible only to the booking's renter, the assignee and administrators. The WebSocket token is sent in the first message, never in the URL. Location history is deleted after 90 days (`purge-locations`).
 - Secrets live only in environment variables. HTTPS is required in production.
 - No real financial transactions or production deployments happen without explicit owner approval.
 
@@ -1144,21 +1199,17 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
 - Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload screens come in Stage 14. On web, session tokens are kept in `localStorage` (development preview only).
-- Payments are tested with test doubles and a local Paystack stand-in, not yet against the real Paystack sandbox (no test keys yet). Schedule `python -m app.cli expire-holds` and `python -m app.cli reconcile-payments` in production.
+- Payments are tested with test doubles and a local Paystack stand-in, not yet against the real Paystack sandbox (no test keys yet). Schedule `python -m app.cli expire-holds`, `python -m app.cli reconcile-payments` and `python -m app.cli purge-locations` in production.
+- Live tracking runs in one API process (in-memory broadcaster) and has not yet been tried with real Google keys or on a device.
 - Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
 
 ## 19. Current Development Status
 
-Stages 01–12 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation), Paystack payments (verified checkout, idempotent webhooks, refunds, reconciliation) and deliveries (owner scheduling, handover and return records with photos, exceptions, admin reassignment and rescheduling), with 533 passing tests. The mobile app has real accounts, the marketplace, booking, payment, delivery progress with handover confirmation and My bookings, with 44 passing tests. Live tracking (Stage 13) has not started.
+Stages 01–13 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings (holds, state machine, cancellation), Paystack payments (verified checkout, idempotent webhooks, refunds, reconciliation), deliveries (owner scheduling, handover and return records with photos, exceptions, admin reassignment and rescheduling) and live tracking (location updates, WebSocket push, Google ETA, retention), with 572 passing tests. The mobile app has real accounts, the marketplace, booking, payment, delivery progress with a live map and handover confirmation, My bookings, and owner location sharing, with 54 passing tests.
 
 ## 20. Next Stage
 
-**Stage 13: Google Maps and Live Tracking.** Maps in the app (`react-native-maps`), location
-permissions, location updates from the assigned delivery person only while the delivery is
-`EN_ROUTE`, a WebSocket channel for the renter and administrators, ETA (Routes API),
-stale-location and reconnect handling, and tracking that stops when the delivery ends
-(BR-7.2–7.5). **Needs from you:** Google Maps Platform API keys (Android, iOS and a
-server key for the Routes API, each restricted), and a decision on how long location
-history is kept (proposed 90 days). Without keys, the backend tracking and WebSocket parts
-can be built and tested, and map display waits for the keys. Waiting for owner approval to
-begin.
+**Stage 14: Customer and Owner Dashboards.** Mobile dashboards for bookings, payments,
+deliveries, verification, owner vehicles, availability and earnings, including the owner
+delivery screens still missing (scheduling, handover and return with photos) and in-app
+document upload. Waiting for owner approval to begin.

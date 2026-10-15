@@ -101,6 +101,16 @@ def reconcile_payments_command(session: Session, settings) -> int:
     return 0
 
 
+def purge_locations_command(session: Session, settings) -> int:
+    from app.services.tracking import purge_old_locations
+
+    removed = purge_old_locations(session, settings)
+    print(
+        f"Deleted {removed} location update(s) older than {settings.location_retention_days} days."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser(
         "reconcile-payments",
         help="Re-check pending payments and refunds with the payment provider (run from cron)",
+    )
+    commands.add_parser(
+        "purge-locations",
+        help="Delete delivery location history older than LOCATION_RETENTION_DAYS (run daily)",
     )
     commands.add_parser(
         "seed-demo-data",
@@ -137,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
                 return expire_holds_command(session)
             if args.command == "reconcile-payments":
                 return reconcile_payments_command(session, settings)
+            if args.command == "purge-locations":
+                return purge_locations_command(session, settings)
             return create_admin_command(
                 session,
                 email=args.email,

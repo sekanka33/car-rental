@@ -19,3 +19,12 @@ jest.mock('expo-secure-store', () => {
     deleteItemAsync: jest.fn(async (key: string) => void store.delete(key)),
   };
 });
+
+// react-native-maps is a native view; tests render a placeholder that shows the marker title.
+jest.mock('react-native-maps', () => {
+  const React = jest.requireActual('react');
+  const { Text, View } = jest.requireActual('react-native');
+  const MapView = ({ children }: { children?: React.ReactNode }) => React.createElement(View, { testID: 'map' }, children);
+  const Marker = ({ title }: { title?: string }) => React.createElement(Text, null, `marker:${title}`);
+  return { __esModule: true, default: MapView, Marker };
+});

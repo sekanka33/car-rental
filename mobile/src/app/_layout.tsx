@@ -26,6 +26,8 @@ export default function RootLayout() {
         <Stack.Screen name="vehicles/[id]/book" options={{ title: 'Book this car' }} />
         <Stack.Screen name="bookings/[id]" options={{ title: 'Booking' }} />
         <Stack.Screen name="payments/return" options={{ title: 'Payment' }} />
+        <Stack.Screen name="deliveries/index" options={{ title: 'My deliveries' }} />
+        <Stack.Screen name="deliveries/[id]" options={{ title: 'Delivery' }} />
       </Stack>
       </AuthProvider>
     </SafeAreaProvider>

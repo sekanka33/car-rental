@@ -9,12 +9,13 @@ from app.api.deps import (
     DocumentStorageDep,
     PaymentProviderDep,
     RenterUser,
+    TrackingHubDep,
 )
 from app.api.routes.customers import PRIVATE_FILE_HEADERS
 from app.models.enums import BookingStatus
 from app.schemas.bookings import BookingCreate, BookingResponse, CancelBooking
 from app.schemas.deliveries import AcknowledgeHandover, DeliveryResponse
-from app.services import bookings, deliveries, payments
+from app.services import bookings, deliveries, payments, tracking
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -64,6 +65,7 @@ def cancel_my_booking(
     user: RenterUser,
     session: DbSession,
     provider: PaymentProviderDep,
+    hub: TrackingHubDep,
 ) -> BookingResponse:
     """Cancel an unpaid hold, or a confirmed booking before it starts. A paid booking is
     refunded in full (default policy until OPEN-2 is decided)."""
@@ -71,6 +73,7 @@ def cancel_my_booking(
     payments.refund_cancelled_booking(
         session, provider, booking, actor=user, reason=booking.cancellation_reason or "Cancelled"
     )
+    tracking.publish_for_booking(hub, session, booking.id)
     return BookingResponse.from_model(bookings.get_booking(session, booking.id))
 
 

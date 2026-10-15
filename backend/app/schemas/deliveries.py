@@ -4,6 +4,7 @@ administrators see everything, including exception resolutions."""
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -29,6 +30,33 @@ class ScheduleDelivery(RequestModel):
     @classmethod
     def require_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class LocationUpdate(RequestModel):
+    latitude: Decimal = Field(ge=-90, le=90, max_digits=9, decimal_places=6)
+    longitude: Decimal = Field(ge=-180, le=180, max_digits=9, decimal_places=6)
+    accuracy_m: Decimal | None = Field(default=None, ge=0, le=100_000, decimal_places=1)
+    heading: Decimal | None = Field(default=None, ge=0, lt=360, decimal_places=1)
+    speed_mps: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=1)
+    recorded_at: datetime = Field(description="When the phone took the fix (with timezone)")
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def round_coordinates(cls, value: object) -> object:
+        """Phones report more decimals than we store (6 ≈ 11 cm)."""
+        return round(Decimal(str(value)), 6) if isinstance(value, int | float | str) else value
+
+    @field_validator("accuracy_m", "heading", "speed_mps", mode="before")
+    @classmethod
+    def round_one_decimal(cls, value: object) -> object:
+        return round(Decimal(str(value)), 1) if isinstance(value, int | float | str) else value
+
+    @field_validator("recorded_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
             raise ValueError("must include a timezone")
         return value
 

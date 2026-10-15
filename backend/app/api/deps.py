@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_app_settings
 from app.core.errors import AuthenticationError, PermissionDeniedError
-from app.core.security import InvalidTokenError, decode_access_token
+from app.core.realtime import TrackingHub
+from app.core.security import AccessTokenClaims, InvalidTokenError, decode_access_token
 from app.db.session import get_db
 from app.integrations.email import EmailSender
+from app.integrations.maps import MapsProvider
 from app.integrations.payments import PaymentProvider
 from app.integrations.storage import DocumentStorage
 from app.models import User
@@ -46,17 +48,27 @@ def get_payment_provider(request: Request) -> PaymentProvider | None:
 PaymentProviderDep = Annotated[PaymentProvider | None, Depends(get_payment_provider)]
 
 
-def get_current_user(
-    session: DbSession,
-    settings: AppSettings,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-) -> User:
-    """Authenticate the bearer token. Status and roles come from the database every time."""
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise AuthenticationError("Not authenticated.")
+def get_maps_provider(request: Request) -> MapsProvider | None:
+    return request.app.state.maps_provider
+
+
+MapsProviderDep = Annotated[MapsProvider | None, Depends(get_maps_provider)]
+
+
+def get_tracking_hub(request: Request) -> TrackingHub:
+    return request.app.state.tracking_hub
+
+
+TrackingHubDep = Annotated[TrackingHub, Depends(get_tracking_hub)]
+
+
+def authenticate_access_token(
+    session: Session, settings: Settings, token: str
+) -> tuple[User, AccessTokenClaims]:
+    """Shared by HTTP and WebSocket authentication. Status and roles come from the database."""
     try:
         claims = decode_access_token(
-            credentials.credentials,
+            token,
             secret=settings.jwt_secret_key.get_secret_value(),
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
@@ -68,7 +80,18 @@ def get_current_user(
     if user is None or user.token_version != claims.token_version:
         raise AuthenticationError("Invalid or expired access token.")
     ensure_can_sign_in(user)
-    return user
+    return user, claims
+
+
+def get_current_user(
+    session: DbSession,
+    settings: AppSettings,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> User:
+    """Authenticate the bearer token. Status and roles come from the database every time."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise AuthenticationError("Not authenticated.")
+    return authenticate_access_token(session, settings, credentials.credentials)[0]
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

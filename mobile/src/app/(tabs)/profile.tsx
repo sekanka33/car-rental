@@ -98,6 +98,10 @@ export default function ProfileScreen() {
         </>
       ) : null}
 
+      {user.roles.includes('OWNER') ? (
+        <Button label="My deliveries" variant="secondary" className="mt-8" onPress={() => router.push('/deliveries')} />
+      ) : null}
+
       <Button
         label="Log out"
         variant="secondary"

@@ -3,10 +3,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import AdminUser, DbSession, PaymentProviderDep
+from app.api.deps import AdminUser, DbSession, PaymentProviderDep, TrackingHubDep
 from app.models.enums import BookingStatus
 from app.schemas.bookings import AdminBookingResponse, AdminCancelBooking, BookingRenter
-from app.services import bookings, payments
+from app.services import bookings, payments, tracking
 
 router = APIRouter(prefix="/admin/bookings", tags=["admin: bookings"])
 
@@ -49,8 +49,10 @@ def cancel_booking(
     admin: AdminUser,
     session: DbSession,
     provider: PaymentProviderDep,
+    hub: TrackingHubDep,
 ) -> AdminBookingResponse:
     """Cancel with a reason. A paid booking is refunded in full (default policy)."""
     booking = bookings.cancel_as_admin(session, admin, booking_id, body.reason)
     payments.refund_cancelled_booking(session, provider, booking, actor=admin, reason=body.reason)
+    tracking.publish_for_booking(hub, session, booking.id)
     return _admin_view(bookings.get_booking(session, booking.id))

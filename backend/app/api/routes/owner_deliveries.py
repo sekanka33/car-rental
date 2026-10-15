@@ -5,7 +5,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Query, Response, UploadFile, status
 
-from app.api.deps import AppSettings, DbSession, DocumentStorageDep, OwnerUser
+from app.api.deps import (
+    AppSettings,
+    DbSession,
+    DocumentStorageDep,
+    MapsProviderDep,
+    OwnerUser,
+    TrackingHubDep,
+)
 from app.api.routes.customers import PRIVATE_FILE_HEADERS
 from app.models.enums import HandoverKind
 from app.schemas.deliveries import (
@@ -13,9 +20,10 @@ from app.schemas.deliveries import (
     ExceptionCreate,
     HandoverCreate,
     HandoverPhotoResponse,
+    LocationUpdate,
     ScheduleDelivery,
 )
-from app.services import deliveries
+from app.services import deliveries, tracking
 
 router = APIRouter(prefix="/owners/me/deliveries", tags=["owner: deliveries"])
 
@@ -43,50 +51,70 @@ def read_my_delivery(
 
 @router.post("/{delivery_id}/schedule", response_model=AssignedDeliveryResponse)
 def schedule_delivery(
-    delivery_id: uuid.UUID, body: ScheduleDelivery, user: OwnerUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: ScheduleDelivery,
+    user: OwnerUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AssignedDeliveryResponse:
     """Confirm (or change) the delivery time: within 24 hours before the rental start."""
-    return AssignedDeliveryResponse.for_assignee(
-        deliveries.schedule(session, user, delivery_id, body.scheduled_for)
-    )
+    delivery = deliveries.schedule(session, user, delivery_id, body.scheduled_for)
+    tracking.publish(hub, session, delivery.id, "status")
+    return AssignedDeliveryResponse.for_assignee(delivery)
 
 
 @router.post("/{delivery_id}/start", response_model=AssignedDeliveryResponse)
 def start_delivery(
-    delivery_id: uuid.UUID, user: OwnerUser, session: DbSession
+    delivery_id: uuid.UUID, user: OwnerUser, session: DbSession, hub: TrackingHubDep
 ) -> AssignedDeliveryResponse:
-    return AssignedDeliveryResponse.for_assignee(deliveries.start(session, user, delivery_id))
+    delivery = deliveries.start(session, user, delivery_id)
+    tracking.publish(hub, session, delivery.id, "status")
+    return AssignedDeliveryResponse.for_assignee(delivery)
 
 
 @router.post("/{delivery_id}/handover", response_model=AssignedDeliveryResponse)
 def complete_handover(
-    delivery_id: uuid.UUID, body: HandoverCreate, user: OwnerUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: HandoverCreate,
+    user: OwnerUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AssignedDeliveryResponse:
     """The car is with the renter: record odometer, fuel and condition."""
-    return AssignedDeliveryResponse.for_assignee(
-        deliveries.complete_handover(session, user, delivery_id, **body.model_dump())
-    )
+    delivery = deliveries.complete_handover(session, user, delivery_id, **body.model_dump())
+    tracking.publish(hub, session, delivery.id, "status")
+    return AssignedDeliveryResponse.for_assignee(delivery)
 
 
 @router.post("/{delivery_id}/return", response_model=AssignedDeliveryResponse)
 def record_return(
-    delivery_id: uuid.UUID, body: HandoverCreate, user: OwnerUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: HandoverCreate,
+    user: OwnerUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AssignedDeliveryResponse:
     """The car is back: record its condition. Completes the booking."""
-    return AssignedDeliveryResponse.for_assignee(
-        deliveries.record_return(session, user, delivery_id, **body.model_dump())
-    )
+    delivery = deliveries.record_return(session, user, delivery_id, **body.model_dump())
+    tracking.publish(hub, session, delivery.id, "status")
+    return AssignedDeliveryResponse.for_assignee(delivery)
 
 
 @router.post("/{delivery_id}/exceptions", response_model=AssignedDeliveryResponse)
 def report_exception(
-    delivery_id: uuid.UUID, body: ExceptionCreate, user: OwnerUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: ExceptionCreate,
+    user: OwnerUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AssignedDeliveryResponse:
     """Report a problem. DELAY is informational; anything else stops the delivery until an
     administrator reschedules it or cancels the booking. The renter sees the notes."""
-    return AssignedDeliveryResponse.for_assignee(
-        deliveries.report_exception(session, user, delivery_id, kind=body.kind, notes=body.notes)
+    delivery = deliveries.report_exception(
+        session, user, delivery_id, kind=body.kind, notes=body.notes
     )
+    tracking.publish(hub, session, delivery.id, "status")
+    return AssignedDeliveryResponse.for_assignee(delivery)
 
 
 @router.post(
@@ -126,3 +154,22 @@ def read_record_photo(
     delivery = deliveries.get_assigned_delivery(session, user, delivery_id)
     content_type, data = deliveries.read_photo(session, storage, delivery, photo_id)
     return Response(content=data, media_type=content_type, headers=PRIVATE_FILE_HEADERS)
+
+
+@router.post("/{delivery_id}/location", status_code=status.HTTP_204_NO_CONTENT)
+def share_location(
+    delivery_id: uuid.UUID,
+    body: LocationUpdate,
+    user: OwnerUser,
+    session: DbSession,
+    settings: AppSettings,
+    maps: MapsProviderDep,
+    hub: TrackingHubDep,
+) -> Response:
+    """Send the current position while the car is on its way (409 otherwise). At most one
+    update every LOCATION_MIN_INTERVAL_SECONDS (429). The renter sees the latest position."""
+    delivery = tracking.record_location(
+        session, settings, maps, user, delivery_id, **body.model_dump()
+    )
+    tracking.publish(hub, session, delivery.id, "location")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

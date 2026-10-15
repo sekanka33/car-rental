@@ -3,7 +3,13 @@
 from app.models.audit_log import AuditLog
 from app.models.auth_token import RefreshToken, UserActionToken
 from app.models.booking import Booking
-from app.models.delivery import Delivery, DeliveryException, HandoverPhoto, HandoverRecord
+from app.models.delivery import (
+    Delivery,
+    DeliveryException,
+    DeliveryLocationUpdate,
+    HandoverPhoto,
+    HandoverRecord,
+)
 from app.models.payment import Payment, PaymentEvent, Refund
 from app.models.user import CustomerProfile, OwnerProfile, Role, User, UserRole
 from app.models.vehicle import (
@@ -21,6 +27,7 @@ __all__ = [
     "CustomerProfile",
     "Delivery",
     "DeliveryException",
+    "DeliveryLocationUpdate",
     "HandoverPhoto",
     "HandoverRecord",
     "OwnerProfile",

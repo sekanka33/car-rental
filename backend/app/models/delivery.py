@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin, str_enum
@@ -56,6 +56,12 @@ class Delivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     delivered_at: Mapped[datetime | None]
     cancelled_at: Mapped[datetime | None]
     notes: Mapped[str | None] = mapped_column(Text)
+    # Live tracking (Stage 13): the drop-off is geocoded once; the ETA is refreshed at most
+    # every ETA_REFRESH_SECONDS while the delivery is EN_ROUTE.
+    geocode_attempted_at: Mapped[datetime | None]
+    eta_seconds: Mapped[int | None] = mapped_column(Integer)
+    eta_distance_m: Mapped[int | None] = mapped_column(Integer)
+    eta_computed_at: Mapped[datetime | None]
 
     booking: Mapped[Booking] = relationship()
     assigned_to: Mapped[User | None] = relationship()
@@ -68,6 +74,34 @@ class Delivery(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     def record(self, kind: HandoverKind) -> "HandoverRecord | None":
         return next((r for r in self.records if r.kind == kind), None)
+
+
+class DeliveryLocationUpdate(UUIDPrimaryKeyMixin, Base):
+    """A position sent by the delivery person while EN_ROUTE (BR-7.2). Not audited: it is
+    personal data kept only for LOCATION_RETENTION_DAYS (BR-7.5)."""
+
+    __tablename__ = "delivery_location_updates"
+    __table_args__ = (
+        Index("ix_delivery_location_updates_delivery_recorded", "delivery_id", "recorded_at"),
+        Index("ix_delivery_location_updates_received", "received_at"),
+        CheckConstraint("latitude BETWEEN -90 AND 90", name="latitude_range"),
+        CheckConstraint("longitude BETWEEN -180 AND 180", name="longitude_range"),
+        CheckConstraint("accuracy_m IS NULL OR accuracy_m >= 0", name="accuracy_non_negative"),
+        CheckConstraint(
+            "heading IS NULL OR (heading >= 0 AND heading < 360)", name="heading_range"
+        ),
+        CheckConstraint("speed_mps IS NULL OR speed_mps >= 0", name="speed_non_negative"),
+    )
+
+    delivery_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("deliveries.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    accuracy_m: Mapped[Decimal | None] = mapped_column(Numeric(7, 1))
+    heading: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
+    speed_mps: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
+    recorded_at: Mapped[datetime]  # device time of the fix
+    received_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
 class HandoverRecord(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

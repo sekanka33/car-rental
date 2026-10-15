@@ -51,7 +51,7 @@ Layering (each layer may only call the one beneath it):
 | Core | `app/core/` | Settings (environment variables), security (hashing, JWT), logging, error handling. |
 
 - Auth: short-lived JWT access token (about 15 minutes) and a rotating refresh token stored hashed in the database so it can be revoked. RBAC is enforced through FastAPI dependencies on every protected route.
-- Live tracking: a WebSocket endpoint authenticated with the access token, plus authorisation checks per delivery. One process uses an in-memory broadcaster. Running several instances requires Postgres `LISTEN/NOTIFY` or Redis pub/sub (decided in Stage 13).
+- Live tracking (Stage 13): `WS /api/v1/deliveries/{id}/live`, authenticated by the access token in the first message (never in the URL), with authorisation checked per delivery and again on every status change. Location updates arrive over plain HTTP from the assigned delivery person. **Decision:** an in-process broadcaster (`app/core/realtime.py`), so the API runs as **one process** for now. When a second instance is needed, add PostgreSQL `LISTEN/NOTIFY` (no new infrastructure; payloads are small) feeding the same `TrackingHub.publish`; Redis pub/sub only if Redis is introduced anyway (e.g. for rate limiting in Stage 17). ETA comes from the Google Routes API, rate-limited per delivery; the drop-off address is geocoded once.
 - Background jobs (hold expiry, reminders, notification retries) start as a simple scheduler. Moving to a task queue happens only if needed.
 
 ### Admin dashboard (`admin-dashboard/`)
@@ -69,8 +69,8 @@ Planned core tables for Stage 04 (more added as features need them):
 Added since: `refresh_tokens`, `user_action_tokens`, `verification_submissions`,
 `verification_files`, `vehicle_documents`, `vehicle_availability_blocks`,
 `payment_events`, `refunds` (Stage 11), `handover_records`, `handover_photos` and
-`delivery_exceptions` (Stage 12). Still to come: `delivery_location_updates` (Stage 13)
-and `notifications` (Stage 16).
+`delivery_exceptions` (Stage 12). `delivery_location_updates` (Stage 13). Still to come:
+`notifications` (Stage 16).
 
 Key integrity decisions:
 - Money: `NUMERIC(12,2)` with a `currency CHAR(3) DEFAULT 'ZAR'` check.

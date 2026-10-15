@@ -15,6 +15,12 @@ Copy `.env.example` to `.env` (git-ignored) and set `EXPO_PUBLIC_API_URL` to the
 
 `EXPO_PUBLIC_*` values are compiled into the app, so never put secrets in them.
 
+Maps: Expo Go and iOS need no key (Expo Go ships its own; iOS uses Apple Maps). For a
+development or store build on Android, set `GOOGLE_MAPS_ANDROID_API_KEY` (and
+`GOOGLE_MAPS_IOS_API_KEY` only if switching iOS to Google Maps); `app.config.js` passes them to
+the `react-native-maps` plugin at build time. Restrict each key to the app (package name and
+SHA-1 / bundle ID). On web the map is replaced by a link to Google Maps.
+
 ## Sign-in and sessions
 
 Login and registration call the backend (`src/services/auth.ts`, `src/context/auth.tsx`).
@@ -43,7 +49,19 @@ Once a booking is paid, booking detail shows its delivery (`src/components/deliv
 who delivers and when, updates from the owner, and the handover and return records. The
 renter confirms receipt with **"I have the car"** (optionally noting anything that does
 not match the handover record), then taps **"I'm ready to return the car"** when done.
-Owner delivery screens arrive in Stage 14; until then owners use the API.
+
+**Live tracking** (`src/components/live-tracking.tsx`, `src/hooks/use-delivery-tracking.ts`):
+while the delivery is scheduled or on its way, the renter's booking screen keeps a WebSocket
+open. It shows the car on a map with the ETA and "Updated … ago", warns when no position has
+arrived for a minute, reconnects with backoff (up to 30 s) after a network drop, refreshes the
+session once if the server closes with 4401, and stops when tracking ends.
+
+**Owners** open **Profile → My deliveries** (`src/app/deliveries/`). On a scheduled delivery
+they tap **Set off now**, then **Share my location** (`src/hooks/use-location-sharing.ts`):
+the app asks for foreground location permission and sends a position at most every 10 s while
+the screen is open, and stops by itself when the server says the delivery is no longer on its
+way. Background sharing needs a development build and is not enabled. The other owner screens
+(scheduling, handover, return) arrive in Stage 14; until then owners use the API for those.
 
 ## Commands
 
@@ -68,7 +86,8 @@ src/
 │   ├── (auth)/       # Login, Registration (real backend accounts)
 │   ├── (tabs)/       # Home (marketplace), Bookings, Profile
 │   ├── vehicles/[id]/  # index (details), book (dates, quote, reserve)
-│   └── bookings/[id].tsx  # Booking detail, hold countdown, cancel
+│   ├── bookings/[id].tsx  # Booking detail, hold countdown, cancel, live tracking
+│   └── deliveries/   # Owner: my deliveries, set off, share location
 ├── context/          # AuthProvider / useAuth
 ├── components/       # Reusable UI (ui/) and domain components
 ├── constants/        # Branding placeholders and colour constants

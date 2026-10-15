@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # Where Paystack sends the customer after checkout (must be http(s)).
     payment_callback_url: str | None = None
 
+    # Live delivery tracking (Stage 13).
+    # Server key for the Geocoding and Routes APIs. Without it there is no ETA; tracking works.
+    google_maps_api_key: SecretStr | None = None
+    location_min_interval_seconds: int = Field(default=5, ge=1, le=60)
+    location_max_age_seconds: int = Field(default=600, ge=30, le=3600)  # older fixes rejected
+    eta_refresh_seconds: int = Field(default=60, ge=15, le=600)  # Routes API calls per delivery
+    location_retention_days: int = Field(default=90, ge=1, le=3650)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_cors_origins(cls, value: object) -> object:
@@ -85,7 +93,7 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("paystack_secret_key", mode="before")
+    @field_validator("paystack_secret_key", "google_maps_api_key", mode="before")
     @classmethod
     def empty_key_means_disabled(cls, value: object) -> object:
         return None if value in ("", None) else value

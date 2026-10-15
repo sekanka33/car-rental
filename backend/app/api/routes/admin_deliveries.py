@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response
 
-from app.api.deps import AdminUser, DbSession, DocumentStorageDep
+from app.api.deps import AdminUser, DbSession, DocumentStorageDep, TrackingHubDep
 from app.api.routes.customers import PRIVATE_FILE_HEADERS
 from app.models.enums import DeliveryStatus
 from app.schemas.deliveries import (
@@ -12,7 +12,7 @@ from app.schemas.deliveries import (
     AdminReschedule,
     ResolveException,
 )
-from app.services import deliveries
+from app.services import deliveries, tracking
 
 router = APIRouter(prefix="/admin/deliveries", tags=["admin: deliveries"])
 
@@ -47,24 +47,35 @@ def read_delivery(
 
 @router.post("/{delivery_id}/assign", response_model=AdminDeliveryResponse)
 def reassign(
-    delivery_id: uuid.UUID, body: AdminReassign, admin: AdminUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: AdminReassign,
+    admin: AdminUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AdminDeliveryResponse:
-    """Hand the delivery to another active owner account (audited)."""
-    return AdminDeliveryResponse.for_admin(
-        deliveries.reassign(session, admin, delivery_id, body.user_id)
-    )
+    """Hand the delivery to another active owner account (audited). The previous assignee's
+    live view is closed."""
+    delivery = deliveries.reassign(session, admin, delivery_id, body.user_id)
+    tracking.publish(hub, session, delivery.id, "status")
+    return AdminDeliveryResponse.for_admin(delivery)
 
 
 @router.post("/{delivery_id}/reschedule", response_model=AdminDeliveryResponse)
 def reschedule(
-    delivery_id: uuid.UUID, body: AdminReschedule, admin: AdminUser, session: DbSession
+    delivery_id: uuid.UUID,
+    body: AdminReschedule,
+    admin: AdminUser,
+    session: DbSession,
+    hub: TrackingHubDep,
 ) -> AdminDeliveryResponse:
     """Set a new delivery time (e.g. after a failed attempt); resolves open exceptions.
     To give up instead, cancel the booking (`POST /admin/bookings/{id}/cancel`); it is
     refunded."""
-    return AdminDeliveryResponse.for_admin(
-        deliveries.admin_reschedule(session, admin, delivery_id, body.scheduled_for, body.note)
+    delivery = deliveries.admin_reschedule(
+        session, admin, delivery_id, body.scheduled_for, body.note
     )
+    tracking.publish(hub, session, delivery.id, "status")
+    return AdminDeliveryResponse.for_admin(delivery)
 
 
 @router.post(

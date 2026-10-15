@@ -7,9 +7,9 @@ rolled back. Nothing is committed implicitly after the response is sent.
 
 from collections.abc import Iterator
 
-from fastapi import Request
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.requests import HTTPConnection
 
 
 def build_engine(database_url: str, *, echo: bool = False) -> Engine:
@@ -28,9 +28,9 @@ def build_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def get_db(request: Request) -> Iterator[Session]:
-    """FastAPI dependency: yields a Session and rolls back if the request fails."""
-    session: Session = request.app.state.session_factory()
+def get_db(connection: HTTPConnection) -> Iterator[Session]:
+    """FastAPI dependency (HTTP and WebSocket): yields a Session; rolls back on failure."""
+    session: Session = connection.app.state.session_factory()
     try:
         yield session
     except Exception:

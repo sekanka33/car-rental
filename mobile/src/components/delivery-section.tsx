@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 
+import { LiveTracking } from '@/components/live-tracking';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/notice';
 import { TextField } from '@/components/ui/text-field';
@@ -76,6 +77,9 @@ export function DeliverySection({ delivery, onChanged }: { delivery: Delivery; o
     <>
       <Text className="mb-1 mt-6 text-lg font-semibold text-ink">Delivery</Text>
       <Text className="text-base text-ink">{statusLine(delivery)}</Text>
+      {delivery.status === 'SCHEDULED' || delivery.status === 'EN_ROUTE' ? (
+        <LiveTracking deliveryId={delivery.id} status={delivery.status} onStatusChange={onChanged} />
+      ) : null}
       {openIssues.map((issue) => (
         <View key={issue.id} className="mt-3">
           <Notice tone="info" message={`Update from the owner: ${issue.notes}`} />
