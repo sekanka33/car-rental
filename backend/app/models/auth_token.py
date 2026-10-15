@@ -10,7 +10,6 @@ from app.models.enums import UserActionTokenPurpose
 
 class RefreshToken(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """A refresh token. Only a SHA-256 hash of the token is stored.
-
     Tokens rotate on every use. All tokens descended from one login share a
     `family_id`; presenting an already-rotated token revokes the whole family.
     """
