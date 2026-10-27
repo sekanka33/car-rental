@@ -1,5 +1,6 @@
 """Import every model so Base.metadata is complete (used by Alembic and tests)."""
 
+from app.models.analytics import MonthlyPlatformAnalytics
 from app.models.audit_log import AuditLog
 from app.models.auth_token import RefreshToken, UserActionToken
 from app.models.booking import Booking
@@ -30,6 +31,7 @@ from app.models.verification import VerificationFile, VerificationSubmission
 __all__ = [
     "AuditLog",
     "Booking",
+    "MonthlyPlatformAnalytics",
     "CustomerProfile",
     "Delivery",
     "DeliveryException",

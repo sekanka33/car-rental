@@ -37,6 +37,7 @@ EXPECTED_TABLES = {
     "notification_deliveries",
     "notification_preferences",
     "push_tokens",
+    "monthly_platform_analytics",
 }
 
 pytestmark = requires_db

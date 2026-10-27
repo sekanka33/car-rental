@@ -8,6 +8,7 @@ does not end up in shell history or process lists). Use --password-stdin for aut
 
 import argparse
 import getpass
+import logging
 import sys
 from collections.abc import Callable
 
@@ -19,6 +20,7 @@ from app.schemas.auth import FullName, Password
 from app.services.accounts import create_admin
 
 PasswordReader = Callable[[str], str]
+logger = logging.getLogger(__name__)
 
 
 def create_admin_command(
@@ -186,15 +188,42 @@ def main(argv: list[str] | None = None) -> int:
         "seed-demo-data",
         help="DEVELOPMENT ONLY: create demo owners, approved vehicles, photos and prices",
     )
+    commands.add_parser(
+        "analytics-refresh",
+        help="Refresh the stored monthly analytics snapshot from PostgreSQL source records",
+    )
     args = parser.parse_args(argv)
 
     from app.core.config import get_settings
+    from app.core.logging import configure_logging
     from app.db.session import build_engine, build_session_factory
 
     settings = get_settings()
+    if args.command == "analytics-refresh":
+        configure_logging(settings.log_level)
     engine = build_engine(settings.database_url.get_secret_value())
     try:
         with build_session_factory(engine)() as session:
+            if args.command == "analytics-refresh":
+                from app.services.analytics import refresh_monthly_analytics
+
+                summary = refresh_monthly_analytics(session)
+                session.commit()
+                logger.info(
+                    "Monthly analytics refresh completed: "
+                    "bookings=%d payments=%d refunds=%d months=%d",
+                    summary.bookings_extracted,
+                    summary.payments_extracted,
+                    summary.refunds_extracted,
+                    summary.months_loaded,
+                )
+                print(
+                    f"Analytics refresh complete: {summary.bookings_extracted} booking(s), "
+                    f"{summary.payments_extracted} payment(s), "
+                    f"{summary.refunds_extracted} refund(s), "
+                    f"{summary.months_loaded} month(s) loaded."
+                )
+                return 0
             if args.command == "seed-demo-data":
                 return seed_demo_command(session, settings)
             if args.command == "expire-holds":

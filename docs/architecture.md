@@ -26,6 +26,10 @@ The backend is the only component that writes to the database, talks to the
 payment provider with secret credentials, or makes trust decisions (roles,
 prices, eligibility, payment status, delivery authorisation).
 
+The operator-run analytics pipeline also reads operational records from PostgreSQL and
+writes derived monthly aggregates to `monthly_platform_analytics`. The FastAPI backend
+serves those persisted aggregates through an administrator-only endpoint.
+
 ## 2. Component responsibilities
 
 ### Mobile app (`mobile/`)
@@ -73,6 +77,14 @@ Added since: `refresh_tokens`, `user_action_tokens`, `verification_submissions`,
 `payment_events`, `refunds` (Stage 11), `handover_records`, `handover_photos` and
 `delivery_exceptions` (Stage 12). `delivery_location_updates` (Stage 13). Still to come:
 `notifications` (Stage 16).
+
+The additive `monthly_platform_analytics` table contains one derived row per South African
+calendar month with booking counts by current status, cash collected, processed refunds,
+net cash and refresh time. `python -m app.cli analytics-refresh` scans bookings, payments
+and refunds in one `UNION ALL` statement, validates and aggregates them without joins,
+then upserts the snapshot in the caller's transaction. It is intentionally a full refresh:
+the source schema has update timestamps but no reliable change-event history for all of
+the status and cash-flow semantics needed by the aggregate.
 
 Key integrity decisions:
 - Money: `NUMERIC(12,2)` with a `currency CHAR(3) DEFAULT 'ZAR'` check.

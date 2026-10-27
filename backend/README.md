@@ -38,6 +38,42 @@ When `APP_ENV=production`, `/docs`, `/redoc`, and the OpenAPI schema are disable
 `/api/v1/health` returns `"database": "ok"` (200), or `"database": "unavailable"`
 with status 503 when PostgreSQL cannot be reached.
 
+## Monthly analytics pipeline
+
+The assessment pipeline reads the operational `bookings`, `payments`, and `refunds`
+tables, validates their statuses and monetary fields, groups each source independently by
+South African calendar month, and writes a replaceable snapshot to
+`monthly_platform_analytics`. It does not join source tables, so multiple refunds cannot
+inflate payment totals. The refresh is a full scan; PostgreSQL primary/foreign keys
+provide source-row uniqueness and referential integrity.
+
+After applying migrations, run the refresh from `backend/`:
+
+```bash
+python -m app.cli analytics-refresh
+```
+
+The command reports extracted row counts and loaded months. It commits only after a
+successful extraction, validation, transformation, and load; failures exit non-zero and
+leave the previous snapshot intact. Re-running it upserts the same month keys and removes
+stale derived months. It never changes operational bookings, payments, or refunds.
+
+The administrator-only endpoint returns the latest 12 months by default (up to 120):
+
+```text
+GET /api/v1/admin/analytics/monthly?months=12
+```
+
+Send a bearer access token for an `ADMIN` user. Booking counts are bucketed by
+`bookings.created_at`, and their status breakdown is the current status at the time of
+refresh. Cash collected is bucketed by `payments.paid_at` and includes rows with a paid
+timestamp; processed refunds are bucketed by `refunds.processed_at`. Pending/failed
+refunds and payments without `paid_at` are not cash flows. These are platform cash
+aggregates, not accounting revenue or owner payouts.
+
+For the full architecture, SQL verification, manual checks, and assessment walkthrough,
+see [DATA_ENGINEERING_DEMO.md](../docs/DATA_ENGINEERING_DEMO.md).
+
 ## Database
 
 PostgreSQL 16 runs in Docker for local development (`docker-compose.yml` at the

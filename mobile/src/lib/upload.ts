@@ -3,6 +3,7 @@
  * form. The backend checks every file's real type by content; these are only conveniences.
  */
 import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Platform } from 'react-native';
 
@@ -52,12 +53,12 @@ export async function pickDocument(): Promise<PickedFile | null> {
   return { uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'application/pdf' };
 }
 
-/** Adds a picked file to a form. React Native takes {uri, name, type}; the web needs a Blob. */
+/** Adds a picked file to a form using the file representation supported by each fetch runtime. */
 export async function appendFile(form: FormData, field: string, file: PickedFile): Promise<void> {
   if (Platform.OS === 'web') {
     const blob = await (await fetch(file.uri)).blob();
     form.append(field, blob, file.name);
     return;
   }
-  form.append(field, { uri: file.uri, name: file.name, type: file.mimeType } as unknown as Blob);
+  form.append(field, new File(file.uri), file.name);
 }

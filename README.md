@@ -26,6 +26,9 @@ live delivery tracking.
 
 Detailed requirements: [docs/requirements.md](docs/requirements.md).
 Business rules: [docs/business-rules.md](docs/business-rules.md).
+Data Engineering elective preparation: [demo guide](docs/DATA_ENGINEERING_DEMO.md),
+[technical Q&A](docs/DATA_ENGINEERING_QA.md), [presentation script](docs/DATA_ENGINEERING_PRESENTATION.md),
+and [readiness report](docs/DATA_ENGINEERING_READINESS.md).
 
 ## 2. Project Goals
 
@@ -77,7 +80,11 @@ car-rental/
 │   ├── business-rules.md   # Rules enforced by the backend
 │   ├── architecture.md     # Components, layering, data model plan, providers
 │   ├── development-roadmap.md
-│   └── deployment.md       # Production release gates and operations runbook
+│   ├── deployment.md       # Production release gates and operations runbook
+│   ├── DATA_ENGINEERING_DEMO.md
+│   ├── DATA_ENGINEERING_QA.md
+│   ├── DATA_ENGINEERING_PRESENTATION.md
+│   └── DATA_ENGINEERING_READINESS.md
 ├── mobile/                 # Expo app (Stage 02) — see mobile/README.md
 │   ├── src/app/            # Expo Router screens
 │   ├── src/components/     # Reusable UI components

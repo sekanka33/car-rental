@@ -87,6 +87,9 @@ async function send(method: string, path: string, options: RequestOptions, acces
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'AbortError';
+    if (__DEV__ && !timedOut) {
+      console.warn(`[api] ${method} ${path} failed before an HTTP response`, error);
+    }
     throw new ApiError(
       timedOut
         ? 'The server took too long to respond. Please try again.'
