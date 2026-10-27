@@ -476,6 +476,11 @@ See [.env.example](.env.example).
 | `BOOKING_MIN_LEAD_MINUTES` | `120` | Earliest start, relative to now |
 | `BOOKING_MAX_DAYS` | `30` | Longest rental (1–90) |
 | `MAX_PENDING_BOOKINGS_PER_RENTER` | `2` | Unpaid holds a renter may have at once |
+| `AUTH_LOGIN_REQUESTS_PER_MINUTE` | `10` | Login requests per client IP and API process |
+| `AUTH_REGISTRATION_REQUESTS_PER_HOUR` | `10` | Registrations per client IP and API process |
+| `PASSWORD_RESET_REQUESTS_PER_HOUR` | `5` | Password-reset requests per client IP and API process |
+| `MARKETPLACE_REQUESTS_PER_MINUTE` | `120` | Public marketplace requests per client IP and API process |
+| `BOOKING_REQUESTS_PER_MINUTE` | `10` | Booking creates per renter and API process |
 | `PAYSTACK_SECRET_KEY` | *(none)* | Empty disables online payment (503). Must start with `sk_test_` (or `sk_live_` with the next setting) |
 | `ALLOW_LIVE_PAYMENTS` | `false` | Must be `true` for a live key; set only after real transactions are explicitly approved |
 | `PAYSTACK_BASE_URL` | `https://api.paystack.co` | Paystack API base URL |
@@ -491,6 +496,20 @@ See [.env.example](.env.example).
 | `LOCATION_MAX_AGE_SECONDS` | `600` | Older location fixes are rejected (30–3600) |
 | `ETA_REFRESH_SECONDS` | `60` | Minimum time between Routes API calls per delivery (15–600) |
 | `LOCATION_RETENTION_DAYS` | `90` | Location history kept this long (`purge-locations`) |
+
+Rate limits return the standard error envelope with HTTP `429` and a `Retry-After`
+header. They use a bounded, thread-safe in-memory sliding window, so they apply across
+requests handled by one API process only. The current live-tracking broadcaster is also
+process-local; run one API process until both are moved to shared infrastructure. If
+the API is behind a reverse proxy, configure Uvicorn to trust only that proxy so
+`request.client.host` is the actual client address; never trust arbitrary forwarded
+headers.
+
+Request logs are JSON on stdout and include a server-generated request ID, method,
+path, status, and duration. Query strings and request bodies are not logged. HTTP
+responses include the same `X-Request-ID` and security headers; production responses
+also include HSTS. Production traffic must reach the app only through a TLS-enforcing
+ingress.
 
 ## Structure
 

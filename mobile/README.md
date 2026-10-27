@@ -5,12 +5,14 @@ Renter and owner app for the car rental platform. See the root
 
 ## Configuration
 
-Copy `.env.example` to `.env` (git-ignored) and set `EXPO_PUBLIC_API_URL` to the backend:
+Copy `.env.example` to `.env` (git-ignored). The API URL defaults to the current
+platform (`http://localhost:8000` on web/iOS and `http://10.0.2.2:8000` on the
+Android emulator); set `EXPO_PUBLIC_API_URL` only to override it:
 
 | Where the app runs | `EXPO_PUBLIC_API_URL` |
 |--------------------|-----------------------|
 | Web / iOS simulator on this computer | `http://localhost:8000` (default) |
-| Android emulator | `http://10.0.2.2:8000` |
+| Android emulator | `http://10.0.2.2:8000` (default) |
 | Physical phone (Expo Go) | `http://<computer LAN IP>:8000`; start the backend with `--host 0.0.0.0` |
 
 `EXPO_PUBLIC_*` values are compiled into the app, so never put secrets in them.
@@ -111,6 +113,9 @@ Private photos (owner car photos, handover photos) are loaded with the access to
 (`src/components/private-image.tsx`).
 
 ## Commands
+
+For emulator-specific Expo Go and development-build instructions, see
+[ANDROID-EMULATOR.md](./ANDROID-EMULATOR.md).
 
 ```bash
 npm install              # install dependencies

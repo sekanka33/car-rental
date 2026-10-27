@@ -4,7 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import NotificationsScreen from '@/app/notifications';
 import { useAuth } from '@/context/auth';
 import { safeAppPath } from '@/hooks/use-notification-links';
-import { forgetPushToken, setUpPush } from '@/lib/push';
+import { configureForegroundNotifications, forgetPushToken, setUpPush } from '@/lib/push';
 import * as notificationsService from '@/services/notifications';
 
 jest.mock('@/context/auth', () => ({ useAuth: jest.fn() }));
@@ -21,9 +21,11 @@ jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   router: { push: jest.fn() },
 }));
+jest.mock('expo', () => ({ isRunningInExpoGo: jest.fn(() => false) }));
 jest.mock('expo-device', () => ({ isDevice: true }));
 jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { extra: { eas: { projectId: 'proj-1' } } } } }));
 jest.mock('expo-notifications', () => ({
+  __esModule: true,
   getPermissionsAsync: jest.fn(),
   requestPermissionsAsync: jest.fn(),
   setNotificationChannelAsync: jest.fn(),
@@ -33,6 +35,7 @@ jest.mock('expo-notifications', () => ({
 }));
 
 const mockRouter = jest.requireMock('expo-router').router as { push: jest.Mock };
+const mockIsRunningInExpoGo = jest.requireMock('expo').isRunningInExpoGo as jest.Mock;
 const Notifications = jest.requireMock('expo-notifications') as Record<string, jest.Mock>;
 const service = notificationsService as unknown as Record<string, jest.Mock>;
 const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
@@ -49,6 +52,7 @@ const item = (id: string, read: boolean, link: string | null = `/bookings/${id}`
 });
 
 beforeEach(() => {
+  mockIsRunningInExpoGo.mockReturnValue(false);
   (useAuth as jest.Mock).mockReturnValue({ state: { status: 'signedIn', user: { id: 'u1', roles: ['RENTER'] } } });
   service.getPreferences.mockResolvedValue({ email_enabled: true, push_enabled: true, note: 'Payment receipts, refunds and cancellations are always emailed.' });
 });
@@ -101,6 +105,17 @@ describe('inbox', () => {
 });
 
 describe('push setup', () => {
+  it('does not load push notifications in Expo Go', async () => {
+    mockIsRunningInExpoGo.mockReturnValue(true);
+    configureForegroundNotifications();
+    await expect(setUpPush({ ask: true })).resolves.toEqual({
+      status: 'unsupported',
+      reason: 'Push notifications need a development or store build of the app (not Expo Go).',
+    });
+    expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled();
+    expect(Notifications.setNotificationHandler).not.toHaveBeenCalled();
+  });
+
   it('registers the token when permission is granted', async () => {
     Notifications.getPermissionsAsync.mockResolvedValue({ granted: true, canAskAgain: true });
     await expect(setUpPush({ ask: false })).resolves.toEqual({ status: 'registered' });

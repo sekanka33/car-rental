@@ -52,6 +52,17 @@ class PermissionDeniedError(AppError):
     code = "permission_denied"
 
 
+class RateLimitError(AppError):
+    """A request exceeded a configured rate limit."""
+
+    status_code = 429
+    code = "rate_limited"
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("Too many requests. Please try again later.")
+        self.headers = {"Retry-After": str(retry_after)}
+
+
 def _error_response(
     status_code: int,
     code: str,
@@ -74,34 +85,76 @@ def _status_code_slug(status_code: int) -> str:
         return "http_error"
 
 
-async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
+def _request_security_headers(
+    request: Request, extra: dict[str, str] | None = None
+) -> dict[str, str]:
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+    }
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        headers["X-Request-ID"] = request_id
+    settings = getattr(request.app.state, "settings", None)
+    if settings is not None and settings.app_env.value == "production":
+        headers["Strict-Transport-Security"] = "max-age=31536000"
+    headers.update(extra or {})
+    return headers
+
+
+async def app_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)  # noqa: S101 - registered only for AppError
     return _error_response(
-        exc.status_code, exc.code, exc.message, details=exc.details, headers=exc.headers
+        exc.status_code,
+        exc.code,
+        exc.message,
+        details=exc.details,
+        headers=_request_security_headers(request, exc.headers),
     )
 
 
-async def http_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, StarletteHTTPException)  # noqa: S101
     message = exc.detail if isinstance(exc.detail, str) else HTTPStatus(exc.status_code).phrase
     return _error_response(
-        exc.status_code, _status_code_slug(exc.status_code), message, headers=exc.headers
+        exc.status_code,
+        _status_code_slug(exc.status_code),
+        message,
+        headers=_request_security_headers(request, exc.headers),
     )
 
 
-async def validation_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+async def validation_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, RequestValidationError)  # noqa: S101
     # Echoing submitted values back could leak sensitive input (passwords, ID numbers).
     details = [
         {"location": list(err.get("loc", ())), "message": err.get("msg"), "type": err.get("type")}
         for err in exc.errors()
     ]
-    return _error_response(422, "validation_error", "Request validation failed.", details)
+    return _error_response(
+        422,
+        "validation_error",
+        "Request validation failed.",
+        details,
+        headers=_request_security_headers(request),
+    )
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
-    return _error_response(500, "internal_server_error", "An unexpected error occurred.")
+    logger.exception(
+        "Unhandled error on %s %s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+        extra={"request_id": getattr(request.state, "request_id", None)},
+    )
+    return _error_response(
+        500,
+        "internal_server_error",
+        "An unexpected error occurred.",
+        headers=_request_security_headers(request),
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:

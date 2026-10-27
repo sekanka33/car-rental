@@ -4,6 +4,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -68,6 +69,13 @@ class Settings(BaseSettings):
     booking_max_days: int = Field(default=30, ge=1, le=90)
     max_pending_bookings_per_renter: int = Field(default=2, ge=1, le=10)
 
+    # Public API abuse protection (per client IP, per API process).
+    auth_login_requests_per_minute: int = Field(default=10, ge=1, le=120)
+    auth_registration_requests_per_hour: int = Field(default=10, ge=1, le=100)
+    password_reset_requests_per_hour: int = Field(default=5, ge=1, le=50)
+    marketplace_requests_per_minute: int = Field(default=120, ge=10, le=1000)
+    booking_requests_per_minute: int = Field(default=10, ge=1, le=100)
+
     # Payments (Paystack). Without a secret key, payments are disabled (503).
     # Only test keys (sk_test_...) are accepted unless ALLOW_LIVE_PAYMENTS is true:
     # no real money moves without an explicit decision.
@@ -128,6 +136,26 @@ class Settings(BaseSettings):
     def production_requirements(self) -> "Settings":
         if self.app_env == Environment.PRODUCTION and self.email_backend == "console":
             raise ValueError("EMAIL_BACKEND=console is not allowed in production; use smtp")
+        if self.app_env == Environment.PRODUCTION:
+            if not self.cors_origins:
+                raise ValueError(
+                    "CORS_ORIGINS must contain the HTTPS admin dashboard origin in production"
+                )
+            for origin in self.cors_origins:
+                parsed_origin = urlsplit(origin)
+                if (
+                    parsed_origin.scheme != "https"
+                    or not parsed_origin.netloc
+                    or parsed_origin.path not in ("", "/")
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                    or parsed_origin.username
+                    or parsed_origin.password
+                    or parsed_origin.hostname == "*"
+                ):
+                    raise ValueError("Every production CORS_ORIGINS entry must use HTTPS")
+            if self.database_echo:
+                raise ValueError("DATABASE_ECHO must be false in production")
         if self.email_backend == "smtp" and not self.smtp_host:
             raise ValueError("SMTP_HOST is required when EMAIL_BACKEND=smtp")
         if self.paystack_secret_key is not None:
@@ -139,6 +167,13 @@ class Settings(BaseSettings):
                 )
             if not key.startswith(("sk_test_", "sk_live_")):
                 raise ValueError("PAYSTACK_SECRET_KEY must start with sk_test_ or sk_live_")
+            if self.app_env == Environment.PRODUCTION:
+                callback = urlsplit(self.payment_callback_url or "")
+                provider = urlsplit(self.paystack_base_url)
+                if callback.scheme != "https" or not callback.netloc:
+                    raise ValueError("PAYMENT_CALLBACK_URL must be an HTTPS URL in production")
+                if provider.scheme != "https" or not provider.netloc:
+                    raise ValueError("PAYSTACK_BASE_URL must use HTTPS in production")
         return self
 
     @property

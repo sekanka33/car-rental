@@ -1,4 +1,4 @@
-import { ApiError, apiGet, apiRequest, buildUrl } from '@/lib/api';
+import { ApiError, apiGet, apiRequest, buildUrl, getApiBaseUrl } from '@/lib/api';
 
 const mockFetch = jest.fn();
 globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -8,6 +8,18 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 describe('buildUrl', () => {
+  it('uses the Android emulator host when no API URL is configured', () => {
+    expect(getApiBaseUrl('android')).toBe('http://10.0.2.2:8000');
+  });
+
+  it('routes a configured localhost API URL through the Android emulator host', () => {
+    expect(getApiBaseUrl('android', 'http://localhost:8000')).toBe('http://10.0.2.2:8000');
+  });
+
+  it('keeps an explicitly configured non-local API URL', () => {
+    expect(getApiBaseUrl('android', 'https://api.example.com/')).toBe('https://api.example.com');
+  });
+
   it('drops empty parameters and encodes values', () => {
     expect(buildUrl('/api/v1/vehicles', { q: 'polo vivo', transmission: undefined, city: '', limit: 20 })).toBe(
       'http://localhost:8000/api/v1/vehicles?q=polo%20vivo&limit=20',

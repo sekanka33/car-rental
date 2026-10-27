@@ -4,15 +4,16 @@ A marketplace that connects vehicle owners with renters in South Africa,
 with administrator-controlled pricing, renter verification, ZAR payments, and
 live delivery tracking.
 
-> **Current state:** Stages 01–16 complete. Renters can register and log in in the
+> **Current state:** Stages 01–17 complete. Renters can register and log in in the
 > mobile app, browse real listings, choose dates, see the official price, **reserve a
 > car and pay for it** (Paystack checkout, verified by the backend), follow its
 > **delivery live on a map with an ETA**, confirm the handover and say when they are ready to return it. Owners
 > register and manage their cars, documents and blocked dates, run the whole delivery and
 > return from the app, and see their bookings and gross earnings; renters verify their
 > identity in the app and see their payment history. Administrators run everything from the web dashboard: verification, vehicle approval and pricing, bookings, refunds, deliveries, users and the audit log, with live charts. Payments run in **test
-> mode only** until live keys are approved. Commands for
-> later stages are marked *planned* and will be confirmed when each stage is implemented.
+> mode only** until live keys are approved. Stage 18 has a provider-neutral
+> deployment runbook; production rollout is blocked until the hosting platform,
+> data region, and production app identities are approved.
 
 ---
 
@@ -39,7 +40,7 @@ Business rules: [docs/business-rules.md](docs/business-rules.md).
 
 | Area | Technology |
 |------|------------|
-| Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, expo-image, ESLint 9 (`eslint-config-expo`), Jest 29 + jest-expo 57 + React Native Testing Library 14. Planned: Expo Location, `react-native-maps` (Google provider), WebSocket client |
+| Mobile | Expo SDK 57 (React Native 0.86, React 19.2), TypeScript 6, Expo Router 57, NativeWind 4.2.7 + Tailwind CSS 3.4, Expo Location, `react-native-maps`, WebSocket client, Jest 29 + jest-expo 57 + React Native Testing Library 14 |
 | Backend | Python 3.12, FastAPI 0.143, Pydantic 2.14, pydantic-settings 2.15, SQLAlchemy 2.1.4, Alembic 1.20, psycopg 3.3, argon2-cffi 25.1 (Argon2id), PyJWT 2.15, Uvicorn 0.54, Pytest 9.1, Ruff 0.17. WebSockets (Starlette, Stage 13) |
 | Database | PostgreSQL 16 (local development: Docker Compose, `postgres:16-alpine`) |
 | Admin dashboard | React, TypeScript, Vite, Tailwind CSS, Recharts |
@@ -75,7 +76,8 @@ car-rental/
 │   ├── document-handling.md # Identity documents: storage, access, logging, retention
 │   ├── business-rules.md   # Rules enforced by the backend
 │   ├── architecture.md     # Components, layering, data model plan, providers
-│   └── development-roadmap.md
+│   ├── development-roadmap.md
+│   └── deployment.md       # Production release gates and operations runbook
 ├── mobile/                 # Expo app (Stage 02) — see mobile/README.md
 │   ├── src/app/            # Expo Router screens
 │   ├── src/components/     # Reusable UI components
@@ -119,8 +121,8 @@ dependencies: [docs/development-roadmap.md](docs/development-roadmap.md).
 | 14 | Customer and Owner Dashboards | [x] COMPLETE | backend 583/583; mobile 89/89; 23/24 mutations caught (1 equivalent); API E2E 39/39; browser E2E 25/25 |
 | 15 | Administrator Dashboard | [x] COMPLETE | backend 595/595; admin 32/32; 23/23 mutations caught; browser E2E 27/27 |
 | 16 | Notifications and Communication | [x] COMPLETE | mobile 99/99; admin 33/33; 22/22 mutations caught; live E2E 21/21 |
-| 17 | Security, Testing, and Quality Assurance | NOT STARTED | Not tested |
-| 18 | Deployment and Documentation | NOT STARTED | Not tested |
+| 17 | Security, Testing, and Quality Assurance | [x] COMPLETE | backend 648/648 with PostgreSQL; mobile 103/103; admin 33/33; Ruff, typechecks, lint, secret scan, backend/admin audits |
+| 18 | Deployment and Documentation | BLOCKED | Runbook complete; hosting/data-region and production app identity approval required |
 
 ### Stage 01: Repository Inspection and Project Planning
 
@@ -1126,7 +1128,7 @@ Versions found on the development machine during Stage 01 (Ubuntu 24.04.5 LTS):
 | Tool | Version found | Needed for |
 |------|---------------|------------|
 | Git | 2.43.0 | All |
-| Node.js | 20.20.2 | Mobile, admin dashboard |
+| Node.js | 22.13+ | Mobile, admin dashboard, CI |
 | npm | 10.8.2 | Mobile, admin dashboard |
 | Python | 3.12.3 (with `venv`) | Backend |
 | PostgreSQL | 16.15 (system service present but **not used**; the project uses the Docker container on port 5433) | Backend database |
@@ -1320,6 +1322,12 @@ error uses the envelope `{"error": {"code", "message", "details"?}}`.
 - Deliveries can be acted on only by the assigned delivery person; renters see only their own. Handover and return photos are private, and photos are only accepted shortly after the record (no late "evidence"). The renter sees the delivery person's first name only.
 - Location is accepted only from the assigned delivery person while the car is on its way, and visible only to the booking's renter, the assignee and administrators. The WebSocket token is sent in the first message, never in the URL. Location history is deleted after 90 days (`purge-locations`).
 - Secrets live only in environment variables. HTTPS is required in production.
+- Login, registration, password reset, marketplace reads, and booking creation have
+  bounded sliding-window rate limits. They are per process; keep one API process until
+  rate-limit state and live tracking use shared infrastructure.
+- API responses include security headers and a generated request ID. Request logs are
+  JSON and omit query strings and request bodies. Production settings reject non-HTTPS
+  CORS origins, SQL echo, and insecure payment callback/provider URLs.
 - The admin dashboard only works for administrator accounts (the backend checks every request). It keeps the access token in memory and the refresh token in `sessionStorage`, runs under a strict Content Security Policy, and opens private files only on request (document views are audited).
 - No real financial transactions or production deployments happen without explicit owner approval.
 
@@ -1331,25 +1339,29 @@ See [docs/business-rules.md](docs/business-rules.md) (BR-8, BR-9) and
 ## 18. Known Issues
 
 - Open business decisions (commission and payouts, cancellation policy, delivery model, insurance age rules, VAT, payment provider) are listed in [docs/requirements.md §5](docs/requirements.md#5-open-business-decisions). They do not block Stages 02–05.
-- Backend: no vehicle, booking, payment, or delivery endpoints yet (Stage 06 onward). Expired booking holds are released by the booking service in Stage 10.
-- **No login rate limiting or lockout yet** (Stage 17).
 - Email: only the development console mailer has been exercised. A real SMTP provider account must be configured before staging or production.
-- Prices are VAT-inclusive with no VAT breakdown (OPEN-6). The public marketplace has no rate limiting yet (Stage 17).
+- Prices are VAT-inclusive with no VAT breakdown (OPEN-6).
 - The intermittent test failure seen in Stage 08 has been traced to two causes and fixed in Stage 10 (see its summary); the suite then passed 5 full runs in a row.
 - Identity documents: local storage is not encrypted at rest (production needs encrypted object storage); retention periods await legal confirmation; no automatic purge; no image re-encoding or malware scanning yet. See [docs/document-handling.md](docs/document-handling.md).
 - The system PostgreSQL on port 5432 is not used. The project database is the Docker container on port 5433.
-- Mobile app: not yet run on a physical device or emulator (web verified end to end against the real API). Document upload and owner screens exist since Stage 14 (web-verified only). On web, session tokens are kept in `localStorage` (development preview only).
-- Payments are tested with test doubles and a local Paystack stand-in, not yet against the real Paystack sandbox (no test keys yet). Schedule `python -m app.cli expire-holds`, `python -m app.cli reconcile-payments` and `python -m app.cli purge-locations` in production.
-- Live tracking runs in one API process (in-memory broadcaster) and has not yet been tried with real Google keys or on a device.
-- Mobile `npm audit`: 6 root advisories in Expo CLI, build and test tooling (not app runtime). Deferred to Stage 17; the `--force` fix would downgrade Expo.
+- Mobile `npm audit` still reports six Expo/Expo Router toolchain advisories (three high, three moderate); available fixes require incompatible SDK/router major changes. They are tracked for the next compatible Expo release, not force-fixed.
+- Rate limiting and live tracking are process-local. Do not horizontally scale the API or add workers until those features use shared infrastructure.
+- Mobile app and live tracking have not been verified on a physical device with production Maps/EAS credentials. Payments use test doubles and a local Paystack stand-in, not the real sandbox.
+- Production is not deployed. A host/region, encrypted private object storage, SMTP/Expo accounts, final Android/iOS identifiers, signing credentials, and POPIA retention approval remain outstanding. See [docs/deployment.md](docs/deployment.md).
+- Schedule `expire-holds`, `reconcile-payments`, `send-reminders`, `purge-locations`, and `purge-notifications` in production after the deployment target and retention policy are approved.
 
 ## 19. Current Development Status
 
-Stages 01–15 are COMPLETE. The backend (PostgreSQL 16) provides authentication, eligibility, vehicle registration and approval, official pricing, a public marketplace, bookings, Paystack payments, deliveries, live tracking, dashboard views and administrator reports and audit log, with 595 passing tests. The mobile app covers the renter and owner journeys (89 tests). The admin dashboard covers every administrator workflow with live charts (32 tests).
+Stages 01–17 are COMPLETE. The backend provides the platform APIs, security controls,
+and operations logging; its full PostgreSQL-backed test suite passes 648 tests. Mobile
+checks pass 103 tests, typecheck, and lint; the admin dashboard passes 33 tests, typecheck,
+lint, build, and dependency audit. Backend runtime dependencies also pass `pip-audit`.
+Stage 18 documentation is prepared, but production rollout is blocked on the decisions
+and credentials listed in [docs/deployment.md](docs/deployment.md).
 
 ## 20. Next Stage
 
-**Stage 16: Notifications and Communication.** Email and Expo push notifications for booking,
-payment, verification, delivery, cancellation and return events, with failure handling and
-user preferences. Needs from you: a real email (SMTP) provider account for staging, and an
-Expo account for push notifications. Waiting for owner approval to begin.
+**Stage 18: Deployment and Documentation.** The provider-neutral deployment, backup,
+monitoring, and rollback runbook is in [docs/deployment.md](docs/deployment.md). Before
+provider-specific infrastructure or a production rollout, choose the hosting provider,
+data region, and final Android/iOS application identifiers. No deployment has been run.

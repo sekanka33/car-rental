@@ -275,8 +275,12 @@ describe('paying for a booking', () => {
 
 describe('delivery', () => {
   it('shows who delivers and when', async () => {
-    (getBooking as jest.Mock).mockResolvedValue(booking({ status: 'DELIVERY_SCHEDULED', hold_expires_at: null }));
-    (getDelivery as jest.Mock).mockResolvedValue(delivery());
+    const startAt = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+    const endAt = new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString();
+    (getBooking as jest.Mock).mockResolvedValue(
+      booking({ status: 'DELIVERY_SCHEDULED', hold_expires_at: null, start_at: startAt, end_at: endAt }),
+    );
+    (getDelivery as jest.Mock).mockResolvedValue(delivery({ scheduled_for: startAt }));
     await wrap(<BookingScreen />);
 
     expect(await screen.findByText(/^Lerato delivers on /)).toBeTruthy();

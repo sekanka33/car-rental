@@ -5,10 +5,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import DbSession, DocumentStorageDep
 from app.core.config import Settings
+from app.core.rate_limits import enforce_marketplace_limit
 from app.models import Vehicle, VehiclePrice
 from app.models.enums import FuelType, Province, Transmission
 from app.schemas.marketplace import (
@@ -25,7 +26,9 @@ from app.schemas.marketplace import (
 from app.services import marketplace
 from app.services.marketplace import SearchFilters, SortOrder
 
-router = APIRouter(prefix="/vehicles", tags=["marketplace"])
+router = APIRouter(
+    prefix="/vehicles", tags=["marketplace"], dependencies=[Depends(enforce_marketplace_limit)]
+)
 API_PREFIX = Settings.model_fields["api_v1_prefix"].default
 
 

@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Request, status
 
 from app.api.deps import AppSettings, CurrentUser, DbSession, EmailSenderDep
+from app.core.rate_limits import enforce_request_limit
 from app.schemas.auth import (
     LoginRequest,
     MessageResponse,
@@ -29,9 +30,14 @@ def _tokens(pair: auth_service.TokenPair) -> TokenResponse:
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
 def register(
-    body: RegisterRequest, session: DbSession, settings: AppSettings, sender: EmailSenderDep
+    body: RegisterRequest,
+    session: DbSession,
+    settings: AppSettings,
+    sender: EmailSenderDep,
+    request: Request,
 ) -> UserResponse:
     """Create a renter or owner account and send an email-verification link."""
+    enforce_request_limit(request, "register", settings.auth_registration_requests_per_hour, 3600)
     user = auth_service.register_user(
         session,
         settings,
@@ -48,8 +54,13 @@ def register(
 
 @router.post("/login", response_model=TokenResponse)
 def login(
-    body: LoginRequest, session: DbSession, settings: AppSettings, user_agent: UserAgent = None
+    body: LoginRequest,
+    session: DbSession,
+    settings: AppSettings,
+    request: Request,
+    user_agent: UserAgent = None,
 ) -> TokenResponse:
+    enforce_request_limit(request, "login", settings.auth_login_requests_per_minute, 60)
     return _tokens(
         auth_service.login(
             session, settings, email=str(body.email), password=body.password, user_agent=user_agent
@@ -103,9 +114,16 @@ def resend_verification(
     response_model=MessageResponse,
 )
 def request_password_reset(
-    body: PasswordResetRequest, session: DbSession, settings: AppSettings, sender: EmailSenderDep
+    body: PasswordResetRequest,
+    session: DbSession,
+    settings: AppSettings,
+    sender: EmailSenderDep,
+    request: Request,
 ) -> MessageResponse:
     """Always returns the same response, whether or not the email is registered."""
+    enforce_request_limit(
+        request, "password-reset", settings.password_reset_requests_per_hour, 3600
+    )
     auth_service.request_password_reset(session, settings, sender, email=str(body.email))
     return MessageResponse(
         message="If an account exists for this email, a password reset link has been sent."

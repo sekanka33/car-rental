@@ -23,8 +23,8 @@ Status values: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT STARTED`.
 | 14 | Customer and Owner Dashboards | [x] COMPLETE | 13 |
 | 15 | Administrator Dashboard | [x] COMPLETE | 14 |
 | 16 | Notifications and Communication | [x] COMPLETE | 15 |
-| 17 | Security, Testing, and Quality Assurance | NOT STARTED | 16 |
-| 18 | Deployment and Documentation | NOT STARTED | 17 |
+| 17 | Security, Testing, and Quality Assurance | [x] COMPLETE | 16 |
+| 18 | Deployment and Documentation | BLOCKED | 17; owner must select hosting/data region and approve production app identifiers |
 
 ## Stage details
 
@@ -89,7 +89,16 @@ React + TypeScript + Tailwind web app in `admin-dashboard/` covering all admin w
 Email and Expo push notifications for booking, payment, verification, delivery, cancellation, and return events, with failure handling.
 
 ### 17 — Security, Testing, and Quality Assurance
-Full test, lint, and type-check runs, dependency audit, secret scan, concurrency, webhook, access-control and migration tests.
+Add bounded abuse limits, production transport/configuration safeguards, JSON request logs,
+security headers, and repeatable CI covering PostgreSQL integration tests, lint, typechecks,
+dependency audits, secret scanning, concurrency, webhooks, access control, and migrations.
+Resolve or document dependency advisories without unsafe major downgrades.
+**Verify:** backend PostgreSQL suite, mobile and dashboard tests/typechecks/lint/build,
+Ruff, runtime dependency audit, secret-baseline hook, and CI workflow.
 
 ### 18 — Deployment and Documentation
-Production configuration, logging and monitoring, backups, deployment and rollback procedures, mobile production builds. **No deployment without approval.**
+Production configuration, structured logs and health monitoring, backups and restore drills,
+deployment and rollback procedures, and mobile production builds. The provider-neutral
+runbook is in `docs/deployment.md`. **Blocked** until the owner selects the hosting provider
+and data region, final app identifiers, object-storage provider, production credentials,
+and approves the deployment. No deployment without explicit approval.

@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
@@ -13,6 +15,7 @@ from app.api.router import api_router
 from app.core.config import API_VERSION, Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.rate_limits import RateLimiter
 from app.core.realtime import TrackingHub
 from app.db.session import build_engine, build_session_factory
 from app.integrations.email import EmailSender, build_email_sender
@@ -83,6 +86,7 @@ def create_app(
         responses={
             401: {"model": ErrorResponse, "description": "Not authenticated"},
             403: {"model": ErrorResponse, "description": "Permission denied"},
+            429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
             413: {"model": ErrorResponse, "description": "Upload too large"},
             422: {"model": ErrorResponse, "description": "Validation error"},
             503: {"model": ErrorResponse, "description": "Service unavailable"},
@@ -93,6 +97,7 @@ def create_app(
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = build_session_factory(engine)
+    app.state.rate_limiter = RateLimiter()
     app.state.email_sender = email_sender or build_email_sender(settings)
     app.state.document_storage = document_storage or LocalDocumentStorage(
         settings.document_storage_dir
@@ -118,6 +123,30 @@ def create_app(
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        request_id = uuid.uuid4().hex
+        request.state.request_id = request_id
+        started = time.perf_counter()
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers["X-Request-ID"] = request_id
+        if settings.app_env.value == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        logger.info(
+            "http_request",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+            },
+        )
+        return response
 
     register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)

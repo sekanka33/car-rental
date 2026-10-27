@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from app.api.deps import (
     AppSettings,
@@ -12,6 +12,7 @@ from app.api.deps import (
     TrackingHubDep,
 )
 from app.api.routes.customers import PRIVATE_FILE_HEADERS
+from app.core.rate_limits import enforce_request_limit
 from app.models.enums import BookingStatus
 from app.schemas.bookings import BookingCreate, BookingResponse, CancelBooking
 from app.schemas.deliveries import AcknowledgeHandover, DeliveryResponse
@@ -22,10 +23,21 @@ router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=BookingResponse)
 def create_booking(
-    body: BookingCreate, user: RenterUser, session: DbSession, settings: AppSettings
+    body: BookingCreate,
+    user: RenterUser,
+    session: DbSession,
+    settings: AppSettings,
+    request: Request,
 ) -> BookingResponse:
     """Reserve a vehicle. The backend checks eligibility and availability and calculates the
     price. The booking is PENDING_PAYMENT and holds the dates until `hold_expires_at`."""
+    enforce_request_limit(
+        request,
+        "create-booking",
+        settings.booking_requests_per_minute,
+        60,
+        identity=str(user.id),
+    )
     booking = bookings.create_booking(
         session,
         settings,

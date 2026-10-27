@@ -6,10 +6,23 @@
  *   session is cleared and `onSessionExpired` listeners are told.
  */
 import { clearTokens, loadTokens, saveTokens } from '@/lib/token-storage';
+import { Platform } from 'react-native';
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
+export function getApiBaseUrl(platform: typeof Platform.OS, configuredUrl?: string): string {
+  const defaultUrl = platform === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+  const url = configuredUrl?.trim() || defaultUrl;
+  const platformUrl =
+    platform === 'android'
+      ? url.replace(/^(https?:\/\/)(?:localhost|127\.0\.0\.1)(?=[:/]|$)/i, (host) =>
+          host.replace(/localhost|127\.0\.0\.1/i, '10.0.2.2'),
+        )
+      : url;
+  return platformUrl.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = getApiBaseUrl(Platform.OS, process.env.EXPO_PUBLIC_API_URL);
 
 export class ApiError extends Error {
   constructor(
