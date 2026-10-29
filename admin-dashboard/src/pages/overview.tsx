@@ -1,4 +1,5 @@
-import { lazy, Suspense } from 'react';
+import { Component, lazy, Suspense } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 
 import { Card, Loading, LoadError, PageHeader, Table } from '../components/ui';
@@ -9,6 +10,18 @@ import { useLoad } from '../lib/use-load';
 
 // The chart library is large; it loads only for this page.
 const Charts = lazy(() => import('../components/charts'));
+
+class ChartsErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? <LoadError error={new Error('The charts could not be loaded.')} retry={() => window.location.reload()} /> : this.props.children;
+  }
+}
 
 function Tile({ label, value, to, attention = false }: { label: string; value: string; to?: string; attention?: boolean }) {
   const body = (
@@ -52,9 +65,11 @@ function Dashboard({ overview, months }: { overview: Overview; months: MonthRow[
         />
       </div>
 
-      <Suspense fallback={<Loading label="Loading charts…" />}>
-        <Charts overview={overview} months={months} />
-      </Suspense>
+      <ChartsErrorBoundary>
+        <Suspense fallback={<Loading label="Loading charts…" />}>
+          <Charts overview={overview} months={months} />
+        </Suspense>
+      </ChartsErrorBoundary>
 
       <Card title="Monthly figures" className="mt-6">
         <Table head={['Month', 'Confirmed bookings', 'Collected', 'Refunded', 'Net', 'New renters', 'New owners']}>

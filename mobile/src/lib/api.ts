@@ -45,7 +45,7 @@ type QueryValue = string | number | boolean | null | undefined;
 interface RequestOptions {
   params?: Record<string, QueryValue>;
   body?: unknown;
-  /** Multipart upload (files); sent instead of `body`. The boundary header is set by fetch. */
+  /** Multipart upload (files); the platform networking layer sets the boundary header. */
   form?: FormData;
   auth?: boolean;
   timeoutMs?: number;
@@ -79,6 +79,15 @@ async function send(method: string, path: string, options: RequestOptions, acces
   if (options.body !== undefined && !options.form) headers['Content-Type'] = 'application/json';
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   try {
+    if (options.form && Platform.OS !== 'web') {
+      return await sendNativeMultipart(
+        method,
+        buildUrl(path, options.params),
+        options.form,
+        headers,
+        controller.signal,
+      );
+    }
     return await fetch(buildUrl(path, options.params), {
       method,
       headers,
@@ -100,6 +109,58 @@ async function send(method: string, path: string, options: RequestOptions, acces
   } finally {
     clearTimeout(timer);
   }
+}
+
+function sendNativeMultipart(
+  method: string,
+  url: string,
+  form: FormData,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    request.onload = () => {
+      cleanup();
+      const responseHeaders = Object.fromEntries(
+        request
+          .getAllResponseHeaders()
+          .trim()
+          .split(/[\r\n]+/)
+          .filter(Boolean)
+          .map((line) => {
+            const separator = line.indexOf(':');
+            return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()];
+          }),
+      );
+      resolve(new Response(request.responseText, { status: request.status, headers: responseHeaders }));
+    };
+    request.onerror = () => {
+      cleanup();
+      reject(new TypeError('Network request failed'));
+    };
+    request.onabort = () => {
+      cleanup();
+      const error = new Error('The request was aborted.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    try {
+      request.open(method, url);
+      Object.entries(headers).forEach(([name, value]) => request.setRequestHeader(name, value));
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      request.send(form);
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
 }
 
 async function toError(response: Response): Promise<ApiError> {

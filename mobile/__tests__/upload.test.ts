@@ -1,13 +1,8 @@
 import { appendFile, type PickedFile } from '@/lib/upload';
 import { Platform } from 'react-native';
-import { File } from 'expo-file-system';
-
-jest.mock('expo-file-system', () => ({
-  File: jest.fn((uri: string) => ({ uri, name: 'picked.jpg', type: 'image/jpeg', bytes: jest.fn() })),
-}));
 
 describe('appendFile', () => {
-  it('uses an Expo File for native multipart uploads', async () => {
+  it('preserves the native URI, name, and MIME type in multipart data', async () => {
     const form = { append: jest.fn() } as unknown as FormData;
     const picked: PickedFile = {
       uri: 'file:///cache/picked.jpg',
@@ -17,11 +12,9 @@ describe('appendFile', () => {
 
     await appendFile(form, 'photo', picked);
 
-    expect(File).toHaveBeenCalledWith(picked.uri);
     expect(form.append).toHaveBeenCalledWith(
       'photo',
-      expect.objectContaining({ uri: picked.uri }),
-      picked.name,
+      { uri: picked.uri, name: picked.name, type: picked.mimeType },
     );
   });
 

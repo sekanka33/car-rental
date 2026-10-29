@@ -1,4 +1,5 @@
 import { ApiError, apiGet, apiRequest, buildUrl, getApiBaseUrl } from '@/lib/api';
+import { Platform } from 'react-native';
 
 const mockFetch = jest.fn();
 globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -76,14 +77,58 @@ describe('apiGet', () => {
 
 describe('uploads', () => {
   it('sends a multipart form as-is, without a JSON content type', async () => {
+    const originalPlatform = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
     mockFetch.mockResolvedValueOnce(jsonResponse(201, { id: 'p1' }));
     const form = new FormData();
     form.append('document_type', 'INSURANCE');
 
-    await apiRequest('POST', '/api/v1/upload', { form, body: { ignored: true } });
+    try {
+      await apiRequest('POST', '/api/v1/upload', { form, body: { ignored: true } });
 
-    const [, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-    expect(init.body).toBe(form);
-    expect(init.headers['Content-Type']).toBeUndefined();
+      const [, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(init.body).toBe(form);
+      expect(init.headers['Content-Type']).toBeUndefined();
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+    }
+  });
+
+  it('sends native multipart forms through XMLHttpRequest', async () => {
+    const originalPlatform = Platform.OS;
+    const originalXhr = globalThis.XMLHttpRequest;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+
+    class MockXHR {
+      static latest: MockXHR;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      status = 201;
+      responseText = '{"id":"p1"}';
+      open = jest.fn();
+      setRequestHeader = jest.fn();
+      getAllResponseHeaders = jest.fn(() => 'content-type: application/json\r\n');
+      send = jest.fn((_body: XMLHttpRequestBodyInit | null) => this.onload?.());
+      abort = jest.fn(() => this.onabort?.());
+
+      constructor() {
+        MockXHR.latest = this;
+      }
+    }
+    globalThis.XMLHttpRequest = MockXHR as unknown as typeof XMLHttpRequest;
+    mockFetch.mockClear();
+    const form = new FormData();
+    form.append('document_type', 'INSURANCE');
+
+    try {
+      await expect(apiRequest('POST', '/api/v1/upload', { form })).resolves.toEqual({ id: 'p1' });
+      expect(MockXHR.latest.open).toHaveBeenCalledWith('POST', 'http://localhost:8000/api/v1/upload');
+      expect(MockXHR.latest.send).toHaveBeenCalledWith(form);
+      expect(mockFetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.XMLHttpRequest = originalXhr;
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+    }
   });
 });
